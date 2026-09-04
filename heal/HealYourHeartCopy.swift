@@ -11,11 +11,15 @@ enum HealYourHeartCopy {
     static let appName = "Heal Your Heart"
     static let tagline = "You Can't Make Them Love You... And That's Okay."
 
-    static let onboardingDisclosure = "Responses are AI-generated. Your history and memories are stored locally in this prototype."
+    static let onboardingDisclosure = "Responses are AI-generated on this device. Nothing you say is sent to a server."
 
-    static let privacySummary = "Responses are AI-generated. This prototype stores history, memories, Journey progress, and contact events locally on this device."
+    static let privacySummary = "Responses are AI-generated. Heal Your Heart uses Apple's on-device model when your device supports it, and built-in responses when it does not. Your history, memories, Journey progress, and contact events stay on this device."
 
-    static let productionPrivacyRequirement = "A production build should send only relevant context to a secure backend, keep provider keys off-device, avoid raw conversation analytics, and provide account and data deletion."
+    static let productionPrivacyRequirement = "There is no account and no server. Nothing leaves this device, so deleting your data here deletes it everywhere. Export or delete everything at any time below."
+
+    static let onDeviceModelActive = "Apple's on-device model is answering. Your conversation never leaves this device."
+
+    static let onDeviceModelInactive = "This device does not have Apple's on-device model available, so built-in responses are being used. Nothing leaves this device either way."
 
     static let safetySummary = "If someone is in immediate danger, human support and emergency services come first."
 

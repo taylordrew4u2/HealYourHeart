@@ -13,6 +13,7 @@ struct ContentView: View {
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system.rawValue
     @AppStorage("storedProfile") private var storedProfile = ""
     @AppStorage("storedOnboardingCompleted") private var storedOnboardingCompleted = false
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     @State private var profile = AppProfile()
     @State private var onboardingCompleted = false
 
@@ -26,6 +27,7 @@ struct ContentView: View {
                 MainAppView(profile: $profile, appearanceMode: $appearanceMode)
             } else {
                 OnboardingView(profile: $profile) {
+                    storedJourneyState = JourneyState().encoded
                     onboardingCompleted = true
                 }
             }
@@ -42,6 +44,9 @@ struct ContentView: View {
     private func loadStoredState() {
         profile = LocalPersistence.decode(AppProfile.self, from: storedProfile) ?? AppProfile()
         onboardingCompleted = storedOnboardingCompleted
+        if storedJourneyState.isEmpty {
+            storedJourneyState = JourneyState().encoded
+        }
     }
 }
 
@@ -488,7 +493,7 @@ struct ThinkingDots: View {
             ForEach(0..<3) { index in
                 Circle()
                     .fill(palette.accent.opacity(0.65 - Double(index) * 0.12))
-                    .frame(width: 8, height: 8)
+                    .frame(width: max(6, size * 0.13), height: max(6, size * 0.13))
             }
         }
         .padding(10)
@@ -788,10 +793,16 @@ struct HomeView: View {
     @Environment(\.palette) private var palette
     @AppStorage("storedChatMessages") private var storedChatMessages = ""
     @AppStorage("storedContactEvents") private var storedContactEvents = ""
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
     @State private var showingHardMoment = false
     @State private var showingSettings = false
+    @State private var openDay: JourneyDay?
+
+    private var journey: JourneyState {
+        JourneyState.load(from: storedJourneyState)
+    }
 
     var body: some View {
         NavigationStack {
@@ -830,13 +841,18 @@ struct HomeView: View {
             .sheet(isPresented: $showingSettings) {
                 SettingsView(profile: $profile, appearanceMode: $appearanceMode)
             }
+            .sheet(item: $openDay) { day in
+                JourneyDayDetail(day: day, profile: profile) {
+                    markJourneyDayCompleted(day.number)
+                }
+            }
         }
     }
 
     private var topSection: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Good evening, \(profile.displayName).")
+                Text("\(greeting), \(profile.displayName).")
                     .font(.system(size: 36, weight: .semibold, design: .serif))
                     .foregroundStyle(palette.primaryText)
                     .lineSpacing(3)
@@ -872,22 +888,47 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
     private var todaysJourney: some View {
-        WarmCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("DAY 14")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(palette.secondaryText)
-                Text("The Wave of the Urge")
-                    .font(.system(size: 25, weight: .semibold, design: .serif))
-                    .foregroundStyle(palette.primaryText)
-                Text("Learn what an urge is doing before you act on it.")
-                    .font(.system(size: 17, weight: .regular, design: .rounded))
-                    .foregroundStyle(palette.secondaryText)
-                    .lineSpacing(5)
-                PrimaryButton(title: "Continue", systemImage: "arrow.right") { }
+        let current = journey
+        if let day = current.currentDay {
+            WarmCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("DAY \(day.number)")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                    Text(day.title)
+                        .font(.system(size: 25, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text(day.lesson)
+                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(5)
+                    PrimaryButton(
+                        title: current.isCompleted(day.number) ? "Revisit" : "Continue",
+                        systemImage: "arrow.right"
+                    ) {
+                        openDay = JourneyDay(content: day, state: current.displayState(for: day.number))
+                    }
+                }
             }
         }
+    }
+
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 0..<5: "Still awake"
+        case 5..<12: "Good morning"
+        case 12..<17: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+
+    private func markJourneyDayCompleted(_ number: Int) {
+        var updated = journey
+        updated.markCompleted(number)
+        storedJourneyState = updated.encoded
+        openDay = openDay?.replacingState(.completed)
     }
 
     private var contactProgress: some View {
@@ -950,16 +991,17 @@ struct HomeView: View {
     }
 
     private var phaseCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let current = journey
+        return VStack(alignment: .leading, spacing: 12) {
             Text("CURRENT PHASE")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(palette.secondaryText)
-            Text("Cut Off and Understand")
+            Text(current.currentPhase.rawValue)
                 .font(.system(size: 28, weight: .semibold, design: .serif))
                 .foregroundStyle(palette.primaryText)
-            ProgressView(value: 0.42)
+            ProgressView(value: current.progressFraction)
                 .tint(palette.accent)
-            Text("42% of your current Journey")
+            Text("\(current.progressPercent)% of your current Journey")
                 .font(.system(size: 15, weight: .regular, design: .rounded))
                 .foregroundStyle(palette.secondaryText)
         }
@@ -969,64 +1011,60 @@ struct HomeView: View {
 
 struct JourneyView: View {
     @Environment(\.palette) private var palette
-    @AppStorage("completedJourneyDays") private var completedJourneyDays = "1,2,3,8"
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     let profile: AppProfile
-    @State private var selectedLength = 30
     @State private var selectedDay: JourneyDay?
 
-    private let days = [
-        JourneyDay(number: 1, title: "Your Fragile Moments", phase: "Stabilize", state: .completed, lesson: "Your nervous system is trying to protect you by making everything feel urgent.", action: "Put one glass of water and one simple food choice within reach.", checkIn: "What part of today felt most fragile?"),
-        JourneyDay(number: 2, title: "Breathing Out", phase: "Stabilize", state: .completed, lesson: "Relief often starts by slowing the body before solving the story.", action: "Try four slow exhales before opening any old messages.", checkIn: "Did your body soften even a little?"),
-        JourneyDay(number: 3, title: "Taking Stock of the Storm", phase: "Stabilize", state: .completed, lesson: "A storm is easier to survive when you can name what is happening inside it.", action: "Name one feeling, one fact, and one thing you do not know yet.", checkIn: "Which part is fact, and which part is fear?"),
-        JourneyDay(number: 8, title: "Why the Silence", phase: "Cut Off and Understand", state: .completed, lesson: "Silence can feel like an answer, a punishment, or an invitation to chase. It may be none of those.", action: "Do not use silence as evidence of your worth today.", checkIn: "What meaning are you adding to the silence?"),
-        JourneyDay(number: 14, title: "The Wave of the Urge", phase: "Cut Off and Understand", state: .current, lesson: "An urge rises, peaks, and falls. It asks for action, but it is not the same as a decision.", action: "Delay the next contact impulse by ten minutes and stay with your companion while it passes.", checkIn: "What outcome did the urge promise you?"),
-        JourneyDay(number: 15, title: "The Version You Miss", phase: "Untangle the Story", state: .upcoming, lesson: "Sometimes you miss a real person. Sometimes you miss the version of the relationship your mind edits together.", action: "Compare one warm memory with one fact you usually skip.", checkIn: "What changed when both were allowed in the room?"),
-        JourneyDay(number: 20, title: "What Actually Happened", phase: "Untangle the Story", state: .upcoming, lesson: "Healing asks for the whole story: what was beautiful, what was painful, and what kept repeating.", action: "Tell your companion one pattern you do not want to normalize again.", checkIn: "What did you protect by telling the fuller truth?"),
-        JourneyDay(number: 28, title: "You Don't Need One More Answer", phase: "Untangle the Story", state: .locked, lesson: "Some answers would only create another question. Closure can start before certainty arrives.", action: "Write no letter. Send no proof. Choose one action that belongs only to your life.", checkIn: "What would you do tonight if no answer came?")
-    ]
+    private var journey: JourneyState {
+        JourneyState.load(from: storedJourneyState)
+    }
+
+    private var selectedLength: Binding<Int> {
+        Binding(
+            get: { journey.selectedLength },
+            set: { newValue in
+                var updated = journey
+                updated.select(length: newValue)
+                storedJourneyState = updated.encoded
+            }
+        )
+    }
 
     var body: some View {
         NavigationStack {
             WarmScreen {
                 ScrollView {
+                    let current = journey
                     VStack(alignment: .leading, spacing: 28) {
                         SectionTitle(title: "Your Journey", subtitle: "A warm path through the first difficult stretch. No journal. No homework wall.")
 
-                        Picker("Journey length", selection: $selectedLength) {
-                            Text("30").tag(30)
-                            Text("60").tag(60)
-                            Text("90").tag(90)
+                        Picker("Journey length", selection: selectedLength) {
+                            ForEach(JourneyLibrary.availableLengths, id: \.self) { length in
+                                Text("\(length)").tag(length)
+                            }
                         }
                         .pickerStyle(.segmented)
 
                         WarmCard {
                             VStack(alignment: .leading, spacing: 12) {
-                                Text("\(progressPercent)%")
+                                Text("\(current.progressPercent)%")
                                     .font(.system(size: 58, weight: .semibold, design: .serif))
                                     .foregroundStyle(palette.primaryText)
                                 Text("of your current Journey")
                                     .font(.system(size: 17, weight: .regular, design: .rounded))
                                     .foregroundStyle(palette.secondaryText)
-                                ProgressView(value: Double(completedNumbers.count), total: Double(selectedLength))
+                                ProgressView(value: current.progressFraction)
                                     .tint(palette.accent)
+                                Text("\(current.completedCountInJourney) of \(current.selectedLength) days complete")
+                                    .font(.system(size: 15, weight: .regular, design: .rounded))
+                                    .foregroundStyle(palette.secondaryText)
                             }
                         }
 
-                        VStack(spacing: 0) {
-                            ForEach(days) { day in
-                                Button {
-                                    selectedDay = resolvedDay(day)
-                                } label: {
-                                    JourneyRow(day: resolvedDay(day))
-                                }
-                                .buttonStyle(.plain)
-                                if day.id != days.last?.id {
-                                    Rectangle()
-                                        .fill(palette.divider)
-                                        .frame(width: 1, height: 20)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.leading, 26)
-                                }
+                        ForEach(JourneyPhase.allCases) { phase in
+                            let phaseDays = days(in: phase, of: current)
+                            if !phaseDays.isEmpty {
+                                phaseSection(phase: phase, days: phaseDays)
                             }
                         }
                     }
@@ -1044,28 +1082,43 @@ struct JourneyView: View {
         }
     }
 
-    private var completedNumbers: Set<Int> {
-        Set(completedJourneyDays.split(separator: ",").compactMap { Int($0) })
+    private func phaseSection(phase: JourneyPhase, days: [JourneyDay]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(phase.rawValue.uppercased())
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+
+            VStack(spacing: 0) {
+                ForEach(days) { day in
+                    Button {
+                        selectedDay = day
+                    } label: {
+                        JourneyRow(day: day)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(day.state == .locked)
+                    if day.id != days.last?.id {
+                        Rectangle()
+                            .fill(palette.divider)
+                            .frame(width: 1, height: 20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 26)
+                    }
+                }
+            }
+        }
     }
 
-    private var progressPercent: Int {
-        Int((Double(completedNumbers.count) / Double(selectedLength) * 100).rounded())
-    }
-
-    private func resolvedDay(_ day: JourneyDay) -> JourneyDay {
-        if completedNumbers.contains(day.number) {
-            return day.replacingState(.completed)
-        }
-        if day.number == 14 {
-            return day.replacingState(.current)
-        }
-        return day
+    private func days(in phase: JourneyPhase, of current: JourneyState) -> [JourneyDay] {
+        current.days
+            .filter { phase.dayRange.contains($0.number) }
+            .map { JourneyDay(content: $0, state: current.displayState(for: $0.number)) }
     }
 
     private func markCompleted(_ number: Int) {
-        var completed = completedNumbers
-        completed.insert(number)
-        completedJourneyDays = completed.sorted().map(String.init).joined(separator: ",")
+        var updated = journey
+        updated.markCompleted(number)
+        storedJourneyState = updated.encoded
         selectedDay = selectedDay?.replacingState(.completed)
     }
 }
@@ -1078,7 +1131,7 @@ struct JourneyDay: Identifiable, Equatable {
         case locked
     }
 
-    let id = UUID()
+    var id: Int { number }
     let number: Int
     let title: String
     let phase: String
@@ -1087,8 +1140,39 @@ struct JourneyDay: Identifiable, Equatable {
     let action: String
     let checkIn: String
 
+    init(number: Int, title: String, phase: String, state: State, lesson: String, action: String, checkIn: String) {
+        self.number = number
+        self.title = title
+        self.phase = phase
+        self.state = state
+        self.lesson = lesson
+        self.action = action
+        self.checkIn = checkIn
+    }
+
+    init(content: JourneyContentDay, state: State) {
+        self.init(
+            number: content.number,
+            title: content.title,
+            phase: content.phase,
+            state: state,
+            lesson: content.lesson,
+            action: content.action,
+            checkIn: content.checkIn
+        )
+    }
+
     func replacingState(_ newState: State) -> JourneyDay {
         JourneyDay(number: number, title: title, phase: phase, state: newState, lesson: lesson, action: action, checkIn: checkIn)
+    }
+}
+
+extension JourneyState {
+    func displayState(for number: Int) -> JourneyDay.State {
+        if isCompleted(number) { return .completed }
+        if number == currentDayNumber { return .current }
+        if isLocked(number) { return .locked }
+        return .upcoming
     }
 }
 
@@ -1128,6 +1212,8 @@ struct JourneyRow: View {
                     .font(.system(size: 15, weight: .regular, design: .rounded))
                     .foregroundStyle(palette.secondaryText)
                     .lineSpacing(4)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
             }
             Spacer(minLength: 0)
         }
@@ -1145,7 +1231,7 @@ struct JourneyRow: View {
     private var rowSubtitle: String {
         switch day.state {
         case .completed: "Completed"
-        case .current: "Learn what an urge is doing before you act on it."
+        case .current: day.lesson
         case .upcoming: "Coming up"
         case .locked: "Unlocks as your path continues"
         }
@@ -1245,9 +1331,12 @@ struct CompanionChatView: View {
     @Environment(\.palette) private var palette
     @AppStorage("storedChatMessages") private var storedChatMessages = ""
     @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     let profile: AppProfile
     @State private var mode: TalkMode = .chat
     @State private var draft = ""
+    @State private var isThinking = false
+    private let engine = CompanionEngine()
     @State private var messages: [ChatBubbleModel] = [
         ChatBubbleModel(role: .companion, text: "Hi. I am here. You do not have to explain everything again.")
     ]
@@ -1285,6 +1374,13 @@ struct CompanionChatView: View {
                                         }
                                     )
                                         .id(message.id)
+                                }
+                                if isThinking {
+                                    HStack {
+                                        ThinkingDots(size: 60)
+                                        Spacer()
+                                    }
+                                    .id("thinking")
                                 }
                             }
                             .padding(.horizontal, 24)
@@ -1336,15 +1432,30 @@ struct CompanionChatView: View {
 
     private func sendMessage() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !isThinking else { return }
         let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: mode == .talk ? "voice" : "text")
         messages.append(userMessage)
         rememberFacts(from: userMessage)
         draft = ""
-        let response = LocalCompanionService().send(message: trimmed, context: CompanionContext(profile: profile, recentMessages: messages, memories: memories))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            messages.append(ChatBubbleModel(role: .companion, text: response.reply, sourceMode: mode == .talk ? "voice" : "text"))
-            if mode == .talk {
+
+        let spokenMode = mode
+        isThinking = true
+
+        Task {
+            let response = await engine.reply(
+                to: trimmed,
+                context: CompanionContext(profile: profile, recentMessages: messages, memories: memories),
+                journeyPhase: JourneyState.load(from: storedJourneyState).currentPhase.rawValue
+            )
+            isThinking = false
+            messages.append(
+                ChatBubbleModel(
+                    role: .companion,
+                    text: response.reply,
+                    sourceMode: spokenMode == .talk ? "voice" : "text"
+                )
+            )
+            if spokenMode == .talk {
                 SpeechPlaybackEngine.shared.speak(response.reply)
             }
         }
@@ -2045,7 +2156,7 @@ struct SettingsView: View {
     @AppStorage("storedContactEvents") private var storedContactEvents = ""
     @AppStorage("storedProfile") private var storedProfile = ""
     @AppStorage("storedOnboardingCompleted") private var storedOnboardingCompleted = false
-    @AppStorage("completedJourneyDays") private var completedJourneyDays = "1,2,3,8"
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
     @State private var memories: [MemoryRecord] = []
@@ -2147,6 +2258,9 @@ struct SettingsView: View {
                                 Text(HealYourHeartCopy.privacySummary)
                                     .foregroundStyle(palette.secondaryText)
                                     .lineSpacing(5)
+                                Text(CompanionEngine.onDeviceModelIsAvailable ? HealYourHeartCopy.onDeviceModelActive : HealYourHeartCopy.onDeviceModelInactive)
+                                    .foregroundStyle(palette.secondaryText)
+                                    .lineSpacing(5)
                                 Text(HealYourHeartCopy.productionPrivacyRequirement)
                                     .foregroundStyle(palette.secondaryText)
                                     .lineSpacing(5)
@@ -2226,7 +2340,7 @@ struct SettingsView: View {
             memories: memories,
             messages: LocalPersistence.decode([ChatBubbleModel].self, from: storedChatMessages) ?? [],
             contactEvents: LocalPersistence.decode([ContactEvent].self, from: storedContactEvents) ?? [],
-            completedJourneyDays: completedJourneyDays
+            journey: JourneyState.load(from: storedJourneyState)
         )
         UIPasteboard.general.string = LocalPersistence.encode(export)
     }
@@ -2238,7 +2352,7 @@ struct SettingsView: View {
         storedMemoryItems = ""
         storedChatMessages = ""
         storedContactEvents = ""
-        completedJourneyDays = ""
+        storedJourneyState = ""
         storedOnboardingCompleted = false
         dismiss()
     }
@@ -2250,7 +2364,7 @@ struct LocalExportBundle: Codable {
     let memories: [MemoryRecord]
     let messages: [ChatBubbleModel]
     let contactEvents: [ContactEvent]
-    let completedJourneyDays: String
+    let journey: JourneyState
 }
 
 struct MemoryRecord: Identifiable, Codable, Equatable {

@@ -2,10 +2,9 @@
 //  HealYourHeartServices.swift
 //  heal
 //
-//  Service contracts and local implementations for the production build path.
+//  Service contracts and local implementations. Apple frameworks only.
 //
 
-import AVFoundation
 import Foundation
 
 struct CompanionRequestContext: Codable, Equatable {
@@ -84,40 +83,10 @@ struct ProviderSuggestedAction: Codable, Equatable {
     var label: String
 }
 
-protocol RemoteCompanionProviding {
+/// Implemented by whatever generates the companion's words. Today that is
+/// Apple's on-device model; nothing in this app talks to a server.
+protocol CompanionResponding {
     func send(message: String, context: CompanionRequestContext) async throws -> ProviderCompanionResponse
-}
-
-struct MockRemoteCompanionProvider: RemoteCompanionProviding {
-    func send(message: String, context: CompanionRequestContext) async throws -> ProviderCompanionResponse {
-        let lowercased = message.lowercased()
-
-        if Self.containsAny(lowercased, words: ["kill myself", "end my life", "hurt myself", "hurt them", "suicide", "not safe"]) {
-            return ProviderCompanionResponse(
-                reply: "This needs human support first. If anyone is in immediate danger, call emergency services now. If you can, contact a trusted person and ask them to stay with you.",
-                memoryChanges: [],
-                suggestedAction: ProviderSuggestedAction(type: .safety, label: "Get immediate support")
-            )
-        }
-
-        if Self.containsAny(lowercased, words: ["text", "call", "message", "reach out"]) {
-            return ProviderCompanionResponse(
-                reply: "Before you act, name the outcome you want. Then compare it with what has happened before when contact restarted.",
-                memoryChanges: [],
-                suggestedAction: ProviderSuggestedAction(type: .delayTimer, label: "Start a delay")
-            )
-        }
-
-        return ProviderCompanionResponse(
-            reply: "Let's separate this into fact, hope, and fear. What do you know for sure?",
-            memoryChanges: [],
-            suggestedAction: nil
-        )
-    }
-
-    private static func containsAny(_ text: String, words: [String]) -> Bool {
-        words.contains { text.contains($0) }
-    }
 }
 
 protocol MemoryManaging {
@@ -193,30 +162,7 @@ struct JourneyContentDay: Codable, Equatable, Identifiable {
 }
 
 struct LocalJourneyContentProvider: JourneyContentProviding {
-    private let baseDays: [JourneyContentDay] = [
-        JourneyContentDay(number: 1, title: "Your Fragile Moments", phase: "Stabilize", lesson: "Your nervous system is trying to protect you by making everything feel urgent.", action: "Put one glass of water and one simple food choice within reach.", checkIn: "What part of today felt most fragile?"),
-        JourneyContentDay(number: 2, title: "Breathing Out", phase: "Stabilize", lesson: "Relief often starts by slowing the body before solving the story.", action: "Try four slow exhales before opening any old messages.", checkIn: "Did your body soften even a little?"),
-        JourneyContentDay(number: 8, title: "Why the Silence", phase: "Cut Off and Understand", lesson: "Silence can feel like an answer, a punishment, or an invitation to chase. It may be none of those.", action: "Do not use silence as evidence of your worth today.", checkIn: "What meaning are you adding to the silence?"),
-        JourneyContentDay(number: 14, title: "The Wave of the Urge", phase: "Cut Off and Understand", lesson: "An urge rises, peaks, and falls. It asks for action, but it is not the same as a decision.", action: "Delay the next contact impulse by ten minutes and stay with your companion while it passes.", checkIn: "What outcome did the urge promise you?"),
-        JourneyContentDay(number: 30, title: "You Don't Need One More Answer", phase: "Untangle the Story", lesson: "Some answers would only create another question. Closure can start before certainty arrives.", action: "Choose one action that belongs only to your life.", checkIn: "What would you do tonight if no answer came?"),
-        JourneyContentDay(number: 60, title: "Rebuild Self-Trust", phase: "Rebuild Self-Trust", lesson: "Trust returns through kept promises, not one grand realization.", action: "Keep one small promise to yourself before noon.", checkIn: "What did you prove to yourself today?"),
-        JourneyContentDay(number: 90, title: "A Life Not Organized Around Them", phase: "Move Forward", lesson: "Moving forward does not require forgetting. It requires making your life larger than the ache.", action: "Plan one future-facing thing that has nothing to do with them.", checkIn: "Where did your attention belong today?")
-    ]
-
     func days(for length: Int) -> [JourneyContentDay] {
-        baseDays.filter { $0.number <= length }
-    }
-}
-
-protocol SpeechRecognitionServicing {
-    func startRecording() async throws
-    func stopRecording() async throws -> String
-}
-
-struct SpeechRecognitionPlaceholderService: SpeechRecognitionServicing {
-    func startRecording() async throws {}
-
-    func stopRecording() async throws -> String {
-        ""
+        JourneyLibrary.days(for: length)
     }
 }

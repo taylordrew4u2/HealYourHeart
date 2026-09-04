@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftData
 
 @main
 struct healApp: App {
@@ -14,13 +13,10 @@ struct healApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [
-            UserProfileModel.self,
-            RecoveryPersonModel.self,
-            ChatMessageModel.self,
-            MemoryItemModel.self,
-            JourneyProgressModel.self,
-            ContactEventModel.self
-        ])
     }
 }
+
+// Storage today is on-device app storage, encoded through LocalPersistence.
+// The SwiftData schema in HealYourHeartModels.swift is the shape to migrate to
+// when the history grows past what app storage should hold; attach it here with
+// .modelContainer(for:) at that point.
