@@ -2,7 +2,8 @@
 //  HealYourHeartSecurity.swift
 //  heal
 //
-//  Security helpers for production integration.
+//  Keychain storage for anything this app ever needs to keep private
+//  on-device. There is no server and no provider key to hold.
 //
 
 import Foundation
@@ -81,36 +82,5 @@ struct KeychainSecretStore: SecretStoring {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainStoreError.unhandledStatus(status)
         }
-    }
-}
-
-struct CompanionBackendRequest: Codable, Equatable {
-    var message: String
-    var context: CompanionRequestContext
-    var systemInstructions: String
-}
-
-struct CompanionBackendClient {
-    var endpoint: URL
-    var secretStore: SecretStoring = KeychainSecretStore()
-    var urlSession: URLSession = .shared
-
-    func send(_ request: CompanionBackendRequest) async throws -> ProviderCompanionResponse {
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        if let token = try secretStore.read("sessionToken") {
-            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        urlRequest.httpBody = try JSONEncoder().encode(request)
-
-        let (data, response) = try await urlSession.data(for: urlRequest)
-        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
-            throw URLError(.badServerResponse)
-        }
-
-        return try JSONDecoder().decode(ProviderCompanionResponse.self, from: data)
     }
 }

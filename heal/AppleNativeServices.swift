@@ -162,7 +162,16 @@ final class AppleSpeechRecognitionService {
 import FoundationModels
 
 @available(iOS 26.0, macOS 26.0, *)
-struct AppleFoundationModelsCompanionProvider: RemoteCompanionProviding {
+struct AppleFoundationModelsCompanionProvider: CompanionResponding {
+    /// Apple's on-device model is not present on every device. Callers check
+    /// this before promising the user an on-device conversation.
+    static var isAvailable: Bool {
+        if case .available = SystemLanguageModel.default.availability {
+            return true
+        }
+        return false
+    }
+
     func send(message: String, context: CompanionRequestContext) async throws -> ProviderCompanionResponse {
         let model = SystemLanguageModel.default
 
@@ -178,7 +187,9 @@ struct AppleFoundationModelsCompanionProvider: RemoteCompanionProviding {
             let response = try await session.respond(to: prompt)
             return ProviderCompanionResponse(reply: response.content, memoryChanges: [], suggestedAction: nil)
         case .unavailable:
-            return try await MockRemoteCompanionProvider().send(message: message, context: context)
+            // No on-device model here. The caller falls back to the built-in
+            // local responses rather than reaching for anything off-device.
+            throw CompanionModelError.unavailable
         }
     }
 
