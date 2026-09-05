@@ -185,7 +185,7 @@ struct AppleFoundationModelsCompanionProvider: CompanionResponding {
             let session = LanguageModelSession(instructions: instructions)
             let prompt = promptText(message: message, context: context)
             let response = try await session.respond(to: prompt)
-            return ProviderCompanionResponse(reply: response.content, memoryChanges: [], suggestedAction: nil)
+            return ProviderCompanionResponse(reply: response.content, suggestedAction: nil)
         case .unavailable:
             // No on-device model here. The caller falls back to the built-in
             // local responses rather than reaching for anything off-device.

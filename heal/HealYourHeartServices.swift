@@ -49,25 +49,7 @@ struct CompanionContextContactEvent: Codable, Equatable, Identifiable {
 
 struct ProviderCompanionResponse: Codable, Equatable {
     var reply: String
-    var memoryChanges: [ProviderMemoryChange]
     var suggestedAction: ProviderSuggestedAction?
-}
-
-struct ProviderMemoryChange: Codable, Equatable, Identifiable {
-    enum ChangeType: String, Codable {
-        case add
-        case update
-        case delete
-    }
-
-    var id: UUID
-    var type: ChangeType
-    var category: String
-    var subject: String
-    var content: String
-    var importance: Double
-    var confidence: Double
-    var sourceMessageIDs: [String]
 }
 
 struct ProviderSuggestedAction: Codable, Equatable {
@@ -91,7 +73,6 @@ protocol CompanionResponding {
 
 protocol MemoryManaging {
     func relevantMemories(for message: String, from memories: [CompanionContextMemory]) -> [CompanionContextMemory]
-    func applying(changes: [ProviderMemoryChange], to memories: [CompanionContextMemory]) -> [CompanionContextMemory]
 }
 
 struct LocalMemoryManager: MemoryManaging {
@@ -111,44 +92,6 @@ struct LocalMemoryManager: MemoryManaging {
             .map { $0 }
     }
 
-    func applying(changes: [ProviderMemoryChange], to memories: [CompanionContextMemory]) -> [CompanionContextMemory] {
-        var updated = memories
-
-        for change in changes {
-            switch change.type {
-            case .add:
-                updated.append(
-                    CompanionContextMemory(
-                        id: change.id,
-                        category: change.category,
-                        subject: change.subject,
-                        content: change.content,
-                        importance: change.importance,
-                        confidence: change.confidence,
-                        sourceMessageIDs: change.sourceMessageIDs,
-                        isPinned: false
-                    )
-                )
-            case .update:
-                if let index = updated.firstIndex(where: { $0.id == change.id }) {
-                    updated[index].category = change.category
-                    updated[index].subject = change.subject
-                    updated[index].content = change.content
-                    updated[index].importance = change.importance
-                    updated[index].confidence = change.confidence
-                    updated[index].sourceMessageIDs = change.sourceMessageIDs
-                }
-            case .delete:
-                updated.removeAll { $0.id == change.id }
-            }
-        }
-
-        return updated
-    }
-}
-
-protocol JourneyContentProviding {
-    func days(for length: Int) -> [JourneyContentDay]
 }
 
 struct JourneyContentDay: Codable, Equatable, Identifiable {
@@ -159,10 +102,4 @@ struct JourneyContentDay: Codable, Equatable, Identifiable {
     var lesson: String
     var action: String
     var checkIn: String
-}
-
-struct LocalJourneyContentProvider: JourneyContentProviding {
-    func days(for length: Int) -> [JourneyContentDay] {
-        JourneyLibrary.days(for: length)
-    }
 }

@@ -14,6 +14,8 @@ struct ContentView: View {
     @AppStorage("storedProfile") private var storedProfile = ""
     @AppStorage("storedOnboardingCompleted") private var storedOnboardingCompleted = false
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    @AppStorage("storedJourneyCheckIns") private var storedJourneyCheckIns = ""
+    @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
     @State private var profile = AppProfile()
     @State private var onboardingCompleted = false
 
@@ -24,10 +26,20 @@ struct ContentView: View {
     var body: some View {
         ThemedRoot(appearanceMode: mode) {
             if onboardingCompleted {
-                MainAppView(profile: $profile, appearanceMode: $appearanceMode)
+                MainAppView(
+                    profile: $profile,
+                    appearanceMode: $appearanceMode,
+                    onboardingCompleted: $onboardingCompleted
+                )
             } else {
                 OnboardingView(profile: $profile) {
                     storedJourneyState = JourneyState().encoded
+                    storedMemoryItems = LocalPersistence.encode(
+                        seededMemories(
+                            existing: LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? [],
+                            profile: profile
+                        )
+                    )
                     onboardingCompleted = true
                 }
             }
@@ -65,7 +77,48 @@ struct AppProfile: Codable, Equatable {
     var story = ""
     var currentHurt = ""
     var hardBehavior = ""
+    var trustedSupportName = ""
+    var trustedSupportPhone = ""
     var companionName = ""
+
+    enum CodingKeys: String, CodingKey {
+        case userName
+        case personName
+        case relationshipType
+        case duration
+        case endingStatus
+        case endedBy
+        case contactStatus
+        case contactGoals
+        case lastContact
+        case story
+        case currentHurt
+        case hardBehavior
+        case trustedSupportName
+        case trustedSupportPhone
+        case companionName
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userName = try container.decodeIfPresent(String.self, forKey: .userName) ?? ""
+        personName = try container.decodeIfPresent(String.self, forKey: .personName) ?? ""
+        relationshipType = try container.decodeIfPresent(String.self, forKey: .relationshipType) ?? ""
+        duration = try container.decodeIfPresent(String.self, forKey: .duration) ?? ""
+        endingStatus = try container.decodeIfPresent(String.self, forKey: .endingStatus) ?? ""
+        endedBy = try container.decodeIfPresent(String.self, forKey: .endedBy) ?? ""
+        contactStatus = try container.decodeIfPresent(String.self, forKey: .contactStatus) ?? ""
+        contactGoals = try container.decodeIfPresent(Set<String>.self, forKey: .contactGoals) ?? []
+        lastContact = try container.decodeIfPresent(String.self, forKey: .lastContact) ?? ""
+        story = try container.decodeIfPresent(String.self, forKey: .story) ?? ""
+        currentHurt = try container.decodeIfPresent(String.self, forKey: .currentHurt) ?? ""
+        hardBehavior = try container.decodeIfPresent(String.self, forKey: .hardBehavior) ?? ""
+        trustedSupportName = try container.decodeIfPresent(String.self, forKey: .trustedSupportName) ?? ""
+        trustedSupportPhone = try container.decodeIfPresent(String.self, forKey: .trustedSupportPhone) ?? ""
+        companionName = try container.decodeIfPresent(String.self, forKey: .companionName) ?? ""
+    }
 
     var displayName: String {
         userName.isEmpty ? "there" : userName
@@ -77,6 +130,24 @@ struct AppProfile: Codable, Equatable {
 
     var companionDisplayName: String {
         companionName.isEmpty ? "Mara" : companionName
+    }
+
+    var trustedSupportDisplayName: String {
+        trustedSupportName.isEmpty ? "someone safe" : trustedSupportName
+    }
+
+    var trustedSupportPhoneURL: URL? {
+        let allowed = Set("0123456789+")
+        let cleaned = String(trustedSupportPhone.filter { allowed.contains($0) })
+        guard !cleaned.isEmpty else { return nil }
+        return URL(string: "tel:\(cleaned)")
+    }
+
+    var trustedSupportMessageURL: URL? {
+        let allowed = Set("0123456789+")
+        let cleaned = String(trustedSupportPhone.filter { allowed.contains($0) })
+        guard !cleaned.isEmpty else { return nil }
+        return URL(string: "sms:\(cleaned)")
     }
 
     var shouldShowContactProgress: Bool {
@@ -94,6 +165,62 @@ struct AppProfile: Codable, Equatable {
             return "without checking their profile"
         }
         return "since contact"
+    }
+
+    var relationshipSummary: String {
+        var pieces: [String] = []
+        if !relationshipType.isEmpty {
+            pieces.append(relationshipType.lowercased())
+        }
+        if !duration.isEmpty {
+            pieces.append(duration.lowercased())
+        }
+        if pieces.isEmpty {
+            return "what happened with \(rememberedPerson)"
+        }
+        return "\(pieces.joined(separator: ", ")) with \(rememberedPerson)"
+    }
+
+    var personalAcheLine: String {
+        if !currentHurt.isEmpty {
+            return "I remember the part that hurts most: \(currentHurt)"
+        }
+        if !story.isEmpty {
+            return "I remember the shape of what happened. You do not have to start from zero."
+        }
+        return "We can stay with just the next honest sentence."
+    }
+
+    var boundaryLine: String {
+        if contactGoals.isEmpty {
+            return "We will slow the next decision down before you have to act."
+        }
+        return "I remember what you are trying to protect: \(contactGoals.sorted().joined(separator: ", "))."
+    }
+
+    var hardBehaviorLine: String {
+        if hardBehavior.isEmpty {
+            return "When the feeling spikes, we can pause before it turns into action."
+        }
+        return "When it gets bad, I remember you said you are most likely to \(hardBehavior.lowercased())."
+    }
+
+    var supportLine: String {
+        if trustedSupportName.isEmpty {
+            return "\(companionDisplayName) will stay here and talk through the next minute with you."
+        }
+        return "\(companionDisplayName) will stay here with you. \(trustedSupportName) is saved only if you choose to use that option."
+    }
+
+    var personalCallGreeting: String {
+        let base = "Hi \(displayName). It is \(companionDisplayName)."
+        if !currentHurt.isEmpty {
+            return "\(base) I remember what you said hurts most: \(currentHurt). You do not have to make this sound neat. Tell me what is happening in your body right now."
+        }
+        if !personName.isEmpty {
+            return "\(base) I remember \(rememberedPerson). Start anywhere, even if it comes out messy. What feels loudest right now?"
+        }
+        return "\(base) I am here with you. Take your time. Tell me the part that feels loudest right now."
     }
 }
 
@@ -502,6 +629,47 @@ struct ThinkingDots: View {
     }
 }
 
+struct BreathingPacer: View {
+    @Environment(\.palette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .stroke(palette.accent.opacity(0.24), lineWidth: 12)
+                    .frame(width: 112, height: 112)
+                Circle()
+                    .fill(palette.accent.opacity(0.22))
+                    .frame(width: 74, height: 74)
+                    .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.42 : 0.82))
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 4).repeatForever(autoreverses: true), value: isExpanded)
+                Image(systemName: "lungs.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+            }
+            VStack(spacing: 4) {
+                Text(isExpanded ? "Let it out slowly" : "Breathe in gently")
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .foregroundStyle(palette.primaryText)
+                Text("No fixing. Just one breath with me.")
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(18)
+        .background(palette.card.opacity(0.92))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(palette.divider.opacity(0.8), lineWidth: 1)
+        )
+        .onAppear { isExpanded = true }
+    }
+}
+
 struct BlobShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -564,7 +732,7 @@ struct OnboardingView: View {
                     .fill(palette.divider.opacity(0.75))
                 Capsule()
                     .fill(palette.accent)
-                    .frame(width: proxy.size.width * CGFloat(step + 1) / 14)
+                    .frame(width: proxy.size.width * CGFloat(step + 1) / 16)
             }
         }
         .frame(height: 6)
@@ -599,6 +767,20 @@ struct OnboardingView: View {
             storyStep(title: "What hurts the most right now?", prompt: "Say it plainly. You do not have to make it sound reasonable.", text: $profile.currentHurt)
         case 12:
             singleChoiceStep(title: "When it gets bad, what are you most likely to do?", options: hardBehaviorOptions, selection: $profile.hardBehavior)
+        case 13:
+            textStep(
+                title: "Is there anyone safe you might want nearby?",
+                placeholder: "Trusted person's name",
+                text: $profile.trustedSupportName,
+                subtitle: "This is optional. If no one comes to mind, leave it blank. You still belong here."
+            )
+        case 14:
+            textStep(
+                title: "Add their phone if you want a one-tap option.",
+                placeholder: "Phone number",
+                text: $profile.trustedSupportPhone,
+                subtitle: "Only add this if it helps. You can skip it and add it later."
+            )
         default:
             namingStep
         }
@@ -702,7 +884,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 24) {
             CompanionCharacter(state: .encouraging, size: 150)
                 .frame(maxWidth: .infinity)
-            SectionTitle(title: "Somewhere else, there's another you.", subtitle: "They know what this feels like. They remember what you tell them, and they're here when things get difficult.")
+            SectionTitle(title: "Set up who remembers.", subtitle: "Before you go home, give this voice a name. They will carry the tender parts you already shared.")
             Text("What should we call them?")
                 .font(.system(size: 25, weight: .semibold, design: .serif))
                 .foregroundStyle(palette.primaryText)
@@ -715,6 +897,14 @@ struct OnboardingView: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(palette.divider, lineWidth: 1)
                 )
+            WarmCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("They will remember first")
+                        .font(.system(size: 22, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    DetailBulletList(items: initialMemoryPreview)
+                }
+            }
             if !profile.companionName.isEmpty {
                 WarmCard {
                     Text("Hi. I'm \(profile.companionName).\nYou don't have to explain everything again. I'll remember.")
@@ -725,6 +915,30 @@ struct OnboardingView: View {
                 }
             }
         }
+    }
+
+    private var initialMemoryPreview: [String] {
+        var items = [
+            "Your name is \(profile.displayName).",
+            "This is about \(profile.relationshipSummary)."
+        ]
+
+        if !profile.currentHurt.isEmpty {
+            items.append(profile.personalAcheLine)
+        }
+        if !profile.contactGoals.isEmpty {
+            items.append(profile.boundaryLine)
+        }
+        if !profile.hardBehavior.isEmpty {
+            items.append(profile.hardBehaviorLine)
+        }
+        if !profile.trustedSupportName.isEmpty {
+            items.append(profile.supportLine)
+        } else {
+            items.append("If no one personal is available, crisis support is still there.")
+        }
+
+        return items
     }
 
     private var controls: some View {
@@ -747,9 +961,9 @@ struct OnboardingView: View {
                 .buttonStyle(.plain)
             }
 
-            PrimaryButton(title: step == 0 ? "Start healing" : step == 13 ? "Open Home" : "Continue", systemImage: step == 0 ? "heart.fill" : "arrow.right") {
+            PrimaryButton(title: step == 0 ? "Start healing" : step == 15 ? "Open Home" : "Continue", systemImage: step == 0 ? "heart.fill" : "arrow.right") {
                 withAnimation(.easeInOut) {
-                    if step >= 13 {
+                    if step >= 15 {
                         if profile.companionName.isEmpty {
                             profile.companionName = "Mara"
                         }
@@ -768,10 +982,15 @@ struct OnboardingView: View {
 struct MainAppView: View {
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
+    @Binding var onboardingCompleted: Bool
 
     var body: some View {
         TabView {
-            HomeView(profile: $profile, appearanceMode: $appearanceMode)
+            HomeView(
+                profile: $profile,
+                appearanceMode: $appearanceMode,
+                onboardingCompleted: $onboardingCompleted
+            )
                 .tabItem {
                     Label("Home", systemImage: "house.fill")
                 }
@@ -794,10 +1013,14 @@ struct HomeView: View {
     @AppStorage("storedChatMessages") private var storedChatMessages = ""
     @AppStorage("storedContactEvents") private var storedContactEvents = ""
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    @AppStorage("storedFeelingCheckIns") private var storedFeelingCheckIns = ""
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
+    @Binding var onboardingCompleted: Bool
     @State private var showingHardMoment = false
     @State private var showingSettings = false
+    @State private var showingBuddyCall = false
+    @State private var callOpeningPrompt: String?
     @State private var openDay: JourneyDay?
 
     private var journey: JourneyState {
@@ -811,6 +1034,8 @@ struct HomeView: View {
                     VStack(alignment: .leading, spacing: 28) {
                         topSection
                         needYouButton
+                        callBuddyButton
+                        feelingCheckIn
                         todaysJourney
                         if profile.shouldShowContactProgress {
                             contactProgress
@@ -839,7 +1064,14 @@ struct HomeView: View {
                     .presentationDetents([.large])
             }
             .sheet(isPresented: $showingSettings) {
-                SettingsView(profile: $profile, appearanceMode: $appearanceMode)
+                SettingsView(
+                    profile: $profile,
+                    appearanceMode: $appearanceMode,
+                    onboardingCompleted: $onboardingCompleted
+                )
+            }
+            .fullScreenCover(isPresented: $showingBuddyCall) {
+                BuddyCallView(profile: profile, openingPrompt: callOpeningPrompt)
             }
             .sheet(item: $openDay) { day in
                 JourneyDayDetail(day: day, profile: profile) {
@@ -856,7 +1088,7 @@ struct HomeView: View {
                     .font(.system(size: 36, weight: .semibold, design: .serif))
                     .foregroundStyle(palette.primaryText)
                     .lineSpacing(3)
-                Text(profile.currentHurt.isEmpty ? "I'm here for the next small step." : "You told me this still hurts. We can take it slowly.")
+                Text(profile.personalAcheLine)
                     .font(.system(size: 17, weight: .regular, design: .rounded))
                     .foregroundStyle(palette.secondaryText)
                     .lineSpacing(5)
@@ -888,6 +1120,113 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
+    private var callBuddyButton: some View {
+        Button {
+            callOpeningPrompt = nil
+            showingBuddyCall = true
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 23, weight: .semibold))
+                    .frame(width: 42, height: 42)
+                    .foregroundStyle(Color(hex: "2C211B"))
+                    .background(palette.blush.opacity(0.78))
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Call \(profile.companionDisplayName)")
+                        .font(.system(size: 22, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text("Say the messy part out loud and hear them answer back.")
+                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(palette.secondaryText)
+            }
+            .padding(18)
+            .background(palette.card)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(palette.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var feelingCheckIn: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("How is your heart right now?")
+                        .font(.system(size: 24, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text(latestFeelingLine)
+                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(4)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], spacing: 10) {
+                    ForEach(FeelingCheckInOption.allCases) { option in
+                        Button {
+                            saveFeeling(option)
+                        } label: {
+                            VStack(spacing: 7) {
+                                Image(systemName: option.systemImage)
+                                    .font(.system(size: 20, weight: .semibold))
+                                Text(option.title)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 72)
+                            .foregroundStyle(selectedFeeling == option ? Color(hex: "2C211B") : palette.primaryText)
+                            .background(selectedFeeling == option ? palette.accent : palette.background)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(selectedFeeling == option ? palette.accent : palette.divider, lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let selectedFeeling {
+                    SecondaryButton(title: "Talk through \(selectedFeeling.title.lowercased())", systemImage: "mic.fill") {
+                        callOpeningPrompt = "\(profile.companionDisplayName) here, \(profile.displayName). I saw you chose \(selectedFeeling.title.lowercased()). I am staying with you inside this. \(selectedFeeling.openingLine(for: profile))"
+                        showingBuddyCall = true
+                    }
+                }
+            }
+        }
+    }
+
+    private var feelingCheckIns: [FeelingCheckIn] {
+        LocalPersistence.decode([FeelingCheckIn].self, from: storedFeelingCheckIns) ?? []
+    }
+
+    private var selectedFeeling: FeelingCheckInOption? {
+        feelingCheckIns.sorted { $0.createdAt > $1.createdAt }.first.flatMap { FeelingCheckInOption(rawValue: $0.optionRawValue) }
+    }
+
+    private var latestFeelingLine: String {
+        guard let latest = feelingCheckIns.sorted(by: { $0.createdAt > $1.createdAt }).first,
+              let option = FeelingCheckInOption(rawValue: latest.optionRawValue) else {
+            return "Tap the closest one. It is enough to begin there."
+        }
+        return "Last check-in: \(option.title.lowercased()) at \(latest.createdAt.formatted(date: .omitted, time: .shortened))."
+    }
+
+    private func saveFeeling(_ option: FeelingCheckInOption) {
+        var updated = feelingCheckIns
+        updated.append(FeelingCheckIn(option: option))
+        storedFeelingCheckIns = LocalPersistence.encode(updated.suffix(30).map { $0 })
+        callOpeningPrompt = "\(profile.companionDisplayName) here, \(profile.displayName). I saw you chose \(option.title.lowercased()). \(option.openingLine(for: profile))"
+    }
+
     @ViewBuilder
     private var todaysJourney: some View {
         let current = journey
@@ -900,13 +1239,17 @@ struct HomeView: View {
                     Text(day.title)
                         .font(.system(size: 25, weight: .semibold, design: .serif))
                         .foregroundStyle(palette.primaryText)
-                    Text(day.lesson)
-                        .font(.system(size: 17, weight: .regular, design: .rounded))
-                        .foregroundStyle(palette.secondaryText)
-                        .lineSpacing(5)
-                    PrimaryButton(
-                        title: current.isCompleted(day.number) ? "Revisit" : "Continue",
-                        systemImage: "arrow.right"
+                        Text(day.lesson)
+                            .font(.system(size: 17, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                            .lineSpacing(5)
+                        Text(profile.boundaryLine)
+                            .font(.system(size: 15, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                            .lineSpacing(4)
+                        PrimaryButton(
+                            title: current.isCompleted(day.number) ? "Revisit" : "Continue",
+                            systemImage: "arrow.right"
                     ) {
                         openDay = JourneyDay(content: day, state: current.displayState(for: day.number))
                     }
@@ -1012,6 +1355,7 @@ struct HomeView: View {
 struct JourneyView: View {
     @Environment(\.palette) private var palette
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    @AppStorage("storedJourneyCheckIns") private var storedJourneyCheckIns = ""
     let profile: AppProfile
     @State private var selectedDay: JourneyDay?
 
@@ -1093,7 +1437,7 @@ struct JourneyView: View {
                     Button {
                         selectedDay = day
                     } label: {
-                        JourneyRow(day: day)
+                        JourneyRow(day: day, hasCheckIn: hasCheckIn(for: day.number))
                     }
                     .buttonStyle(.plain)
                     .disabled(day.state == .locked)
@@ -1120,6 +1464,11 @@ struct JourneyView: View {
         updated.markCompleted(number)
         storedJourneyState = updated.encoded
         selectedDay = selectedDay?.replacingState(.completed)
+    }
+
+    private func hasCheckIn(for number: Int) -> Bool {
+        let checkIns = LocalPersistence.decode([Int: String].self, from: storedJourneyCheckIns) ?? [:]
+        return !(checkIns[number] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -1179,6 +1528,7 @@ extension JourneyState {
 struct JourneyRow: View {
     @Environment(\.palette) private var palette
     let day: JourneyDay
+    var hasCheckIn = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -1214,6 +1564,11 @@ struct JourneyRow: View {
                     .lineSpacing(4)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
+                if hasCheckIn {
+                    Label("Small note saved", systemImage: "text.bubble.fill")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.accent)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -1241,9 +1596,12 @@ struct JourneyRow: View {
 struct JourneyDayDetail: View {
     @Environment(\.palette) private var palette
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("storedJourneyCheckIns") private var storedJourneyCheckIns = ""
     let day: JourneyDay
     let profile: AppProfile
     let markCompleted: () -> Void
+    @State private var showingTalkToMe = false
+    @State private var checkInText = ""
 
     var body: some View {
         NavigationStack {
@@ -1262,6 +1620,10 @@ struct JourneyDayDetail: View {
                             }
                             Spacer()
                             CompanionCharacter(state: day.state == .completed ? .celebrating : .encouraging, size: 86)
+                        }
+
+                        PrimaryButton(title: "Talk to me", systemImage: "mic.fill") {
+                            showingTalkToMe = true
                         }
 
                         WarmCard {
@@ -1300,12 +1662,63 @@ struct JourneyDayDetail: View {
                             }
                         }
 
+                        WarmCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Leave a small note")
+                                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                                    .foregroundStyle(palette.primaryText)
+                                TextEditor(text: $checkInText)
+                                    .scrollContentBackground(.hidden)
+                                    .font(.system(size: 17, weight: .regular, design: .rounded))
+                                    .foregroundStyle(palette.primaryText)
+                                    .padding(12)
+                                    .frame(minHeight: 120)
+                                    .background(palette.background)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(palette.divider, lineWidth: 1)
+                                    )
+                                Text(checkInText.isEmpty ? "This can be one sentence. It stays here with this day." : "Saved with Day \(day.number).")
+                                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                                    .foregroundStyle(palette.secondaryText)
+                            }
+                        }
+
+                        WarmCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Talk it through")
+                                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                                    .foregroundStyle(palette.primaryText)
+                                DetailBulletList(items: talkPrompts)
+                            }
+                        }
+
+                        WarmCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("If it gets hard today")
+                                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                                    .foregroundStyle(palette.primaryText)
+                                DetailBulletList(items: hardMomentPlan)
+                            }
+                        }
+
+                        WarmCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Tiny plan")
+                                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                                    .foregroundStyle(palette.primaryText)
+                                DetailBulletList(items: tinyPlan)
+                            }
+                        }
+
                         Text("\(profile.companionDisplayName) can talk this through with you when you need it.")
                             .font(.system(size: 16, weight: .regular, design: .rounded))
                             .foregroundStyle(palette.secondaryText)
                             .lineSpacing(5)
 
                         PrimaryButton(title: day.state == .completed ? "Completed" : "Mark complete", systemImage: "checkmark.circle.fill") {
+                            saveCheckIn()
                             markCompleted()
                             dismiss()
                         }
@@ -1319,6 +1732,107 @@ struct JourneyDayDetail: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .fullScreenCover(isPresented: $showingTalkToMe) {
+                BuddyCallView(
+                    profile: profile,
+                    contextTitle: "Day \(day.number): \(day.title)",
+                    openingPrompt: "\(profile.companionDisplayName) here, \(profile.displayName). I am right here. This is Day \(day.number): \(day.title), and I remember this is tied to \(profile.relationshipSummary). \(profile.personalAcheLine) Say the messy version out loud. I will stay with you while you get it out."
+                )
+            }
+            .onAppear(perform: loadCheckIn)
+            .onChange(of: checkInText) { _, _ in
+                saveCheckIn()
+            }
+        }
+    }
+
+    private func loadCheckIn() {
+        let checkIns = LocalPersistence.decode([Int: String].self, from: storedJourneyCheckIns) ?? [:]
+        checkInText = checkIns[day.number] ?? ""
+    }
+
+    private func saveCheckIn() {
+        var checkIns = LocalPersistence.decode([Int: String].self, from: storedJourneyCheckIns) ?? [:]
+        let trimmed = checkInText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            checkIns.removeValue(forKey: day.number)
+        } else {
+            checkIns[day.number] = checkInText
+        }
+        storedJourneyCheckIns = LocalPersistence.encode(checkIns)
+    }
+
+    private var talkPrompts: [String] {
+        [
+            "What part of this lesson feels tender or hard to believe right now?",
+            "Where does \(profile.rememberedPerson) fit into this today: fact, hope, fear, habit, grief, or the \(profile.relationshipType.isEmpty ? "relationship" : profile.relationshipType.lowercased()) you wanted back?",
+            "What would \(profile.companionDisplayName) say gently if they were only trying to protect the next ten minutes?"
+        ]
+    }
+
+    private var hardMomentPlan: [String] {
+        switch JourneyPhase.phase(forDay: day.number) {
+        case .stabilize:
+            return [
+                "Start with your body before your story: water, food, breath, or lying down.",
+                "Do not solve the whole relationship while your nervous system is alarmed.",
+                "If you feel unsafe alone, stay in the call and use the immediate-danger button only if someone may be hurt right now."
+            ]
+        case .cutOffAndUnderstand:
+            return [
+                "Wait ten minutes before texting, calling, checking, or rereading.",
+                "Name the exact outcome you want from contact with \(profile.rememberedPerson).",
+                "Compare that hoped-for outcome with what usually happens afterward."
+            ]
+        case .untangleTheStory:
+            return [
+                "Hold one warm memory beside one painful pattern without editing either one out.",
+                "Ask whether you are missing \(profile.rememberedPerson), the routine, or the future you imagined.",
+                "Treat unanswered questions as pain, not instructions."
+            ]
+        case .rebuildSelfTrust:
+            return [
+                "Choose one promise to yourself that is small enough to keep today.",
+                "Notice where you are waiting for \(profile.rememberedPerson) to validate a decision that belongs to you.",
+                "If you slip, record what happened and keep the Journey progress intact."
+            ]
+        case .moveForward:
+            return [
+                "Look for the part of your day that is no longer organized around their reaction.",
+                "Choose connection with someone available instead of chasing certainty from someone unavailable.",
+                "Let a good moment be real without using it to test whether you are fully healed."
+            ]
+        }
+    }
+
+    private var tinyPlan: [String] {
+        [
+            "One thing to do: \(day.action)",
+            "One thing to say out loud: \"I can feel this without obeying it.\"",
+            "One thing to bring back here later: \(day.checkIn)"
+        ]
+    }
+}
+
+struct DetailBulletList: View {
+    @Environment(\.palette) private var palette
+    let items: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(items, id: \.self) { item in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .padding(.top, 2)
+                    Text(item)
+                        .font(.system(size: 16, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -1359,6 +1873,10 @@ struct CompanionChatView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 14)
 
+                    chatQuickPrompts
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+
                     ScrollViewReader { proxy in
                         ScrollView {
                             VStack(spacing: 14) {
@@ -1366,8 +1884,16 @@ struct CompanionChatView: View {
                                     ChatBubble(
                                         message: message,
                                         companionName: profile.companionDisplayName,
+                                        isRemembered: isRemembered(message),
+                                        sendSuggestedReply: sendQuickMessage,
                                         togglePinned: {
                                             togglePinned(message)
+                                        },
+                                        rememberMessage: {
+                                            rememberMessage(message)
+                                        },
+                                        forgetMessage: {
+                                            forgetMessage(message)
                                         },
                                         deleteMessage: {
                                             deleteMessage(message)
@@ -1416,7 +1942,7 @@ struct CompanionChatView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             CompanionCharacter(state: mode == .talk ? .listening : .waiting, size: 78)
             VStack(alignment: .leading, spacing: 3) {
                 Text(profile.companionDisplayName)
@@ -1430,15 +1956,66 @@ struct CompanionChatView: View {
         }
     }
 
+    private var chatQuickPrompts: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("If starting is hard")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    chatPromptButton("Stay with me", systemImage: "heart.fill")
+                    chatPromptButton("I feel alone", systemImage: "person.fill.questionmark")
+                    chatPromptButton("I miss them", systemImage: "heart.text.square.fill")
+                    chatPromptButton("I want to reach out", systemImage: "hand.raised.fill")
+                    chatPromptButton("I am spiraling", systemImage: "waveform.path.ecg")
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func chatPromptButton(_ title: String, systemImage: String) -> some View {
+        Button {
+            sendQuickMessage(title)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+            }
+            .padding(.horizontal, 13)
+            .frame(height: 38)
+            .foregroundStyle(palette.primaryText)
+            .background(palette.card)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(palette.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isThinking)
+    }
+
     private func sendMessage() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isThinking else { return }
-        let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: mode == .talk ? "voice" : "text")
+        send(trimmed, sourceMode: mode == .talk ? "voice" : "text", shouldSpeakReply: mode == .talk)
+        draft = ""
+    }
+
+    private func sendQuickMessage(_ text: String) {
+        send(text, sourceMode: "quick_prompt", shouldSpeakReply: mode == .talk)
+    }
+
+    private func send(_ text: String, sourceMode: String, shouldSpeakReply: Bool) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isThinking else { return }
+        let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: sourceMode)
         messages.append(userMessage)
         rememberFacts(from: userMessage)
-        draft = ""
 
-        let spokenMode = mode
         isThinking = true
 
         Task {
@@ -1452,10 +2029,11 @@ struct CompanionChatView: View {
                 ChatBubbleModel(
                     role: .companion,
                     text: response.reply,
-                    sourceMode: spokenMode == .talk ? "voice" : "text"
+                    sourceMode: shouldSpeakReply ? "voice" : "text",
+                    suggestedReplies: suggestedReplies(for: response)
                 )
             )
-            if spokenMode == .talk {
+            if shouldSpeakReply {
                 SpeechPlaybackEngine.shared.speak(response.reply)
             }
         }
@@ -1464,15 +2042,46 @@ struct CompanionChatView: View {
     private func loadMessages() {
         guard let decoded = LocalPersistence.decode([ChatBubbleModel].self, from: storedChatMessages), !decoded.isEmpty else {
             messages = [
-                ChatBubbleModel(role: .companion, text: "Hi. I am \(profile.companionDisplayName). You do not have to explain everything again. I'll remember what matters here.")
+                ChatBubbleModel(
+                    role: .companion,
+                    text: "Hi. I am \(profile.companionDisplayName). You do not have to explain everything again. I'll remember what matters here.",
+                    suggestedReplies: [
+                        "Stay with me",
+                        "I feel alone",
+                        "I miss \(profile.rememberedPerson)"
+                    ]
+                )
             ]
             return
         }
         messages = decoded.filter { !$0.isDeleted }
     }
 
+    private func suggestedReplies(for response: CompanionReply) -> [String] {
+        if response.suggestedAction == "safety" {
+            return ["Stay with me", "Breathe with me", "I am still here"]
+        }
+        if response.suggestedAction == "breathing" {
+            return ["I can see one thing", "Keep breathing with me", "I feel a little calmer"]
+        }
+        if response.suggestedAction == "delay_timer" {
+            return ["Help me not text", "What do I actually want?", "Stay with me"]
+        }
+        if response.suggestedAction == "facts_hopes_fears" {
+            return ["This is a fact", "This is what I fear", "I need help sorting it"]
+        }
+        if response.suggestedAction == "slip_review" {
+            return ["I want to tell you what happened", "I feel ashamed", "Help me keep going"]
+        }
+        return [
+            "Tell me more",
+            "Ask me gently",
+            "Stay with me"
+        ]
+    }
+
     private func loadMemories() {
-        memories = LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? []
+        memories = seededMemories(existing: LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? [], profile: profile)
     }
 
     private func rememberFacts(from message: ChatBubbleModel) {
@@ -1485,6 +2094,43 @@ struct CompanionChatView: View {
             } else {
                 memories.append(memory)
             }
+        }
+    }
+
+    private func isRemembered(_ message: ChatBubbleModel) -> Bool {
+        memories.contains { $0.sourceMessageIDs.contains(message.id.uuidString) }
+    }
+
+    private func rememberMessage(_ message: ChatBubbleModel) {
+        let sourceID = message.id.uuidString
+        guard !isRemembered(message) else { return }
+
+        memories.append(
+            MemoryRecord(
+                category: "saved message",
+                subject: message.role == .user ? "What \(profile.displayName) said" : "What \(profile.companionDisplayName) said",
+                content: message.text,
+                importance: message.role == .user ? 0.82 : 0.68,
+                confidence: 1.0,
+                sourceMessageIDs: [sourceID],
+                isPinned: false
+            )
+        )
+    }
+
+    private func forgetMessage(_ message: ChatBubbleModel) {
+        let sourceID = message.id.uuidString
+        memories = memories.compactMap { memory in
+            guard memory.sourceMessageIDs.contains(sourceID) else { return memory }
+
+            var changed = memory
+            changed.sourceMessageIDs.removeAll { $0 == sourceID }
+            changed.updatedAt = Date()
+
+            if changed.sourceMessageIDs.isEmpty {
+                return nil
+            }
+            return changed
         }
     }
 
@@ -1515,6 +2161,7 @@ struct ChatBubbleModel: Identifiable, Codable, Equatable {
     let role: Role
     let text: String
     var sourceMode = "text"
+    var suggestedReplies: [String] = []
     var isPinned = false
     var isDeleted = false
 }
@@ -1523,29 +2170,6 @@ struct CompanionContext {
     let profile: AppProfile
     let recentMessages: [ChatBubbleModel]
     let memories: [MemoryRecord]
-
-    var knownFacts: [String] {
-        var facts: [String] = []
-        if !profile.personName.isEmpty {
-            facts.append("The person being recovered from is \(profile.personName).")
-        }
-        if !profile.relationshipType.isEmpty {
-            facts.append("Relationship type: \(profile.relationshipType).")
-        }
-        if !profile.contactStatus.isEmpty {
-            facts.append("Current communication: \(profile.contactStatus).")
-        }
-        if !profile.contactGoals.isEmpty {
-            facts.append("Current goals: \(profile.contactGoals.sorted().joined(separator: ", ")).")
-        }
-        if !profile.currentHurt.isEmpty {
-            facts.append("What currently hurts: \(profile.currentHurt).")
-        }
-        if !profile.hardBehavior.isEmpty {
-            facts.append("Likely hard-moment behavior: \(profile.hardBehavior).")
-        }
-        return facts
-    }
 }
 
 struct CompanionReply {
@@ -1573,6 +2197,9 @@ final class SpeechPlaybackEngine: NSObject, SpeechPlaybackService, AVSpeechSynth
 
     func speak(_ text: String) {
         stop()
+        let audioSession = AVAudioSession.sharedInstance()
+        try? audioSession.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? audioSession.setActive(true)
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
         utterance.pitchMultiplier = 0.95
@@ -1589,7 +2216,8 @@ final class SpeechPlaybackEngine: NSObject, SpeechPlaybackService, AVSpeechSynth
 struct LocalCompanionService: CompanionService {
     func send(message: String, context: CompanionContext) -> CompanionReply {
         let lowercased = message.lowercased()
-        let personName = context.profile.rememberedPerson
+        let profile = context.profile
+        let personName = profile.rememberedPerson
         let relevantMemory = context.memories
             .filter { memory in
                 lowercased.contains(memory.subject.lowercased()) ||
@@ -1602,69 +2230,90 @@ struct LocalCompanionService: CompanionService {
 
         if containsAny(lowercased, words: ["kill myself", "end my life", "hurt myself", "hurt them", "suicide", "can't stay safe"]) {
             return CompanionReply(
-                reply: "This is bigger than a breakup moment. Please contact emergency services now if anyone is in immediate danger, or reach a trusted person who can stay with you. I can stay here, but human help needs to come first.",
+                reply: "\(profile.displayName), I remember this is about \(personName), and I am taking this seriously. Stay with me here. Put distance between you and anything you could use to hurt yourself. We are only handling the next minute together. If someone may be hurt right now, use the immediate danger button too.",
                 suggestedAction: "safety"
             )
         }
 
-        if containsAny(lowercased, words: ["text", "call", "reach out", "message"]) {
-            let boundary = context.profile.contactGoals.isEmpty ? "the boundary you want" : context.profile.contactGoals.sorted().joined(separator: ", ")
+        if containsAny(lowercased, words: ["stay with me", "don't leave", "dont leave", "please stay", "breathe with me"]) {
             return CompanionReply(
-                reply: "Pause before you act. You said your current goal is \(boundary). What outcome are you hoping contact with \(personName) will give you tonight?",
+                reply: "I am here, \(profile.displayName). You do not have to perform being okay for me. Put one hand on your chest if that helps. We are only doing the next minute: breathe out slowly, look around the room, and tell me one thing you can see.",
+                suggestedAction: "breathing"
+            )
+        }
+
+        if containsAny(lowercased, words: ["alone", "no one", "nobody", "lonely"]) {
+            return CompanionReply(
+                reply: "\(profile.displayName), being alone with this can make the ache feel enormous. I am here with you right now, and you are not wrong for needing a voice. For this next minute, tell me where you are sitting and whether your body feels tense, heavy, shaky, or numb.",
+                suggestedAction: nil
+            )
+        }
+
+        if containsAny(lowercased, words: ["panic", "panicking", "can't breathe", "cant breathe", "spiraling", "spiral"]) {
+            return CompanionReply(
+                reply: "Stay with my voice, \(profile.displayName). You do not have to figure out \(personName) right now. Unclench your jaw if you can. Breathe out longer than you breathe in. Then tell me: is this fear, grief, shame, or the urge to do something?",
+                suggestedAction: "breathing"
+            )
+        }
+
+        if containsAny(lowercased, words: ["text", "call", "reach out", "message"]) {
+            let boundary = profile.contactGoals.isEmpty ? "the boundary you want" : profile.contactGoals.sorted().joined(separator: ", ")
+            return CompanionReply(
+                reply: "\(profile.displayName), pause before you act. You said your current goal is \(boundary). \(profile.hardBehaviorLine) What outcome are you hoping contact with \(personName) will give you tonight?",
                 suggestedAction: "delay_timer"
             )
         }
 
         if containsAny(lowercased, words: ["liked", "story", "profile", "social", "seen"]) {
             return CompanionReply(
-                reply: "That is a real trigger. What it literally proves may be small, and what it touches in you may be much bigger. What do you know for sure, and what are you afraid it means?",
+                reply: "That is a real trigger, especially because this is \(profile.relationshipSummary). What it literally proves may be small, and what it touches in you may be much bigger. What do you know for sure, and what are you afraid it means?",
                 suggestedAction: "facts_hopes_fears"
             )
         }
 
         if containsAny(lowercased, words: ["miss", "lonely", "want them", "need them"]) {
-            if !context.profile.currentHurt.isEmpty {
+            if !profile.currentHurt.isEmpty {
                 return CompanionReply(
-                    reply: "This connects to what you said hurts most: \(context.profile.currentHurt). I will not talk you out of missing \(personName). I do want to ask: are you missing the whole reality, or the version you keep replaying?",
+                    reply: "This connects to what you said hurts most: \(profile.currentHurt). I will not talk you out of missing \(personName). I do want to ask: are you missing the whole reality, or the version you keep replaying?",
                     suggestedAction: nil
                 )
             }
             return CompanionReply(
-                reply: "Missing \(personName) does not mean contacting them is the next right move. Which part are you missing right now: comfort, certainty, touch, apology, or the old routine?",
+                reply: "Missing \(personName) after \(profile.relationshipSummary) makes sense. It still does not mean contacting them is the next right move. Which part are you missing right now: comfort, certainty, touch, apology, or the old routine?",
                 suggestedAction: nil
             )
         }
 
         if containsAny(lowercased, words: ["slipped", "replied", "checked", "saw them"]) {
             return CompanionReply(
-                reply: "This does not erase your progress. Tell me exactly what happened first, then we can decide whether anything about the streak or contact plan actually needs to change.",
+                reply: "\(profile.displayName), this does not erase your progress. Tell me exactly what happened with \(personName) first, then we can decide whether anything about the streak or contact plan actually needs to change.",
                 suggestedAction: "slip_review"
             )
         }
 
         if let relevantMemory {
             return CompanionReply(
-                reply: "I am using something you actually told me: \(relevantMemory.content) Given that, what is the next action that protects you for the next ten minutes?",
+                reply: "I am using something you actually told me: \(relevantMemory.content) Given that, what is the next action that protects \(profile.displayName) for the next ten minutes?",
                 suggestedAction: nil
             )
         }
 
         if containsAny(lowercased, words: ["why", "what if", "do they", "does he", "does she"]) {
             return CompanionReply(
-                reply: "We can separate this into facts, hopes, and fears. I cannot know what \(personName) intends without direct evidence. What is the clearest fact you have?",
+                reply: "We can separate this into facts, hopes, and fears. I cannot know what \(personName) intends without direct evidence. In the story you told me, what is the clearest fact you have?",
                 suggestedAction: nil
             )
         }
 
-        if context.profile.personName.isEmpty {
+        if profile.personName.isEmpty {
             return CompanionReply(
-                reply: "Stay with this for one more sentence. What part feels most urgent right now?",
+                reply: "\(profile.displayName), stay with this for one more sentence. What part feels most urgent right now?",
                 suggestedAction: nil
             )
         }
 
         return CompanionReply(
-            reply: "I know this is connected to \(personName). Use one sentence for the fact, and one sentence for the meaning your mind is adding to it.",
+            reply: "\(profile.displayName), I know this is connected to \(personName). \(profile.personalAcheLine) Use one sentence for the fact, and one sentence for the meaning your mind is adding to it.",
             suggestedAction: nil
         )
     }
@@ -1678,7 +2327,11 @@ struct ChatBubble: View {
     @Environment(\.palette) private var palette
     let message: ChatBubbleModel
     let companionName: String
+    let isRemembered: Bool
+    let sendSuggestedReply: (String) -> Void
     let togglePinned: () -> Void
+    let rememberMessage: () -> Void
+    let forgetMessage: () -> Void
     let deleteMessage: () -> Void
 
     var body: some View {
@@ -1699,6 +2352,28 @@ struct ChatBubble: View {
                     .font(.system(size: 17, weight: .regular, design: .rounded))
                     .foregroundStyle(message.role == .user ? Color(hex: "2C211B") : palette.primaryText)
                     .lineSpacing(4)
+                if message.role == .companion && !message.suggestedReplies.isEmpty {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(message.suggestedReplies, id: \.self) { reply in
+                            Button {
+                                sendSuggestedReply(reply)
+                            } label: {
+                                Text(reply)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(palette.primaryText)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(palette.background)
+                                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             .padding(14)
             .background(message.role == .user ? palette.accent : palette.card)
@@ -1720,8 +2395,8 @@ struct ChatBubble: View {
                 Label(message.isPinned ? "Unmark important" : "Mark important", systemImage: message.isPinned ? "pin.slash" : "pin")
             }
 
-            Button(action: togglePinned) {
-                Label(message.isPinned ? "Forget this" : "Remember this", systemImage: message.isPinned ? "trash" : "brain.head.profile")
+            Button(action: isRemembered ? forgetMessage : rememberMessage) {
+                Label(isRemembered ? "Forget this" : "Remember this", systemImage: isRemembered ? "brain.head.profile.fill" : "brain.head.profile")
             }
 
             Button(role: .destructive, action: deleteMessage) {
@@ -1860,6 +2535,596 @@ struct TalkControls: View {
     }
 }
 
+struct BuddyCallView: View {
+    @Environment(\.palette) private var palette
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("storedChatMessages") private var storedChatMessages = ""
+    @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
+    @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    let profile: AppProfile
+    var contextTitle: String? = nil
+    var openingPrompt: String? = nil
+    @State private var speechService = AppleSpeechRecognitionService()
+    @State private var messages: [ChatBubbleModel] = []
+    @State private var memories: [MemoryRecord] = []
+    @State private var transcript = ""
+    @State private var callStatus = "Connected"
+    @State private var isRecording = false
+    @State private var isThinking = false
+    @State private var didStartCall = false
+    @State private var showingCrisisSupport = false
+    private let engine = CompanionEngine()
+
+    private var visibleMessages: [ChatBubbleModel] {
+        messages.filter { !$0.isDeleted }.suffix(6)
+    }
+
+    private var lastBuddyReply: String? {
+        messages.last { $0.role == .companion && !$0.isDeleted }?.text
+    }
+
+    var body: some View {
+        WarmScreen {
+            VStack(spacing: 0) {
+                callHeader
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+
+                Spacer(minLength: 20)
+
+                CompanionCharacter(state: companionState, size: 210)
+                    .padding(.bottom, 8)
+
+                Text(profile.companionDisplayName)
+                    .font(.system(size: 44, weight: .semibold, design: .serif))
+                    .foregroundStyle(palette.primaryText)
+
+                if let contextTitle {
+                    Text(contextTitle)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 4)
+                }
+
+                Text(callStatus)
+                    .font(.system(size: 17, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .padding(.top, 4)
+
+                buddyReplyPanel
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+
+                BreathingPacer()
+                    .padding(.horizontal, 24)
+                    .padding(.top, 14)
+
+                currentTranscript
+                    .padding(.horizontal, 24)
+                    .padding(.top, 14)
+
+                quickSupportPrompts
+                    .padding(.horizontal, 24)
+                    .padding(.top, 14)
+
+                recentCallHistory
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+
+                Spacer(minLength: 18)
+
+                callControls
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 28)
+            }
+        }
+        .onAppear(perform: loadCallState)
+        .onChange(of: messages) { _, newValue in
+            storedChatMessages = LocalPersistence.encode(newValue)
+        }
+        .onChange(of: memories) { _, newValue in
+            storedMemoryItems = LocalPersistence.encode(newValue)
+        }
+    }
+
+    private var callHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("In-app call")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                Text("Voice stays on this device.")
+                    .font(.system(size: 13, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+            }
+            Spacer()
+            Button {
+                endCall()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .frame(width: 42, height: 42)
+                    .foregroundStyle(palette.primaryText)
+                    .background(palette.card)
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("End call")
+        }
+    }
+
+    private var currentTranscript: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(isRecording ? "Listening now" : "What you said")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+            Text(transcriptPlaceholder)
+                .font(.system(size: 18, weight: .regular, design: .rounded))
+                .foregroundStyle(transcript.isEmpty ? palette.secondaryText : palette.primaryText)
+                .lineSpacing(5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(18)
+        .background(palette.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(palette.divider, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var buddyReplyPanel: some View {
+        if let lastBuddyReply {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                    Text("\(profile.companionDisplayName) said back")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                    Spacer()
+                }
+                Text(lastBuddyReply)
+                    .font(.system(size: 18, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.primaryText)
+                    .lineSpacing(5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(18)
+            .background(palette.card)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(palette.accent.opacity(0.65), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var recentCallHistory: some View {
+        if !visibleMessages.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recent")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                ForEach(visibleMessages) { message in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: message.role == .user ? "person.fill" : "heart.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(message.role == .user ? palette.secondaryText : palette.accent)
+                            .frame(width: 18)
+                        Text(message.text)
+                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                            .lineLimit(2)
+                            .lineSpacing(3)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private var transcriptPlaceholder: String {
+        if !transcript.isEmpty {
+            return transcript
+        }
+        if contextTitle != nil {
+            return "Tap the microphone and let it come out messy. Your words will transcribe here, then \(profile.companionDisplayName) will answer out loud."
+        }
+        return "Tap the microphone and say what is happening. When you stop, \(profile.companionDisplayName) will answer out loud."
+    }
+
+    private var quickSupportPrompts: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("If words are hard")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+            HStack(spacing: 8) {
+                quickPromptButton("I feel alone", systemImage: "person.fill.questionmark")
+                quickPromptButton("Stay with me", systemImage: "heart.fill")
+                quickPromptButton("Breathe with me", systemImage: "lungs.fill")
+            }
+        }
+    }
+
+    private func quickPromptButton(_ title: String, systemImage: String) -> some View {
+        Button {
+            Task {
+                await sendCallMessage(title)
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .foregroundStyle(palette.primaryText)
+            .background(palette.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(palette.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isThinking || isRecording)
+    }
+
+    private var callControls: some View {
+        HStack(spacing: 14) {
+            Button {
+                if let lastBuddyReply {
+                    callStatus = "\(profile.companionDisplayName) is speaking..."
+                    SpeechPlaybackEngine.shared.speak(lastBuddyReply)
+                }
+            } label: {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(palette.primaryText)
+                    .background(palette.card)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(palette.divider, lineWidth: 1))
+            }
+            .disabled(lastBuddyReply == nil)
+            .accessibilityLabel("Repeat buddy reply")
+
+            Button {
+                SpeechPlaybackEngine.shared.stop()
+                callStatus = "Voice stopped"
+            } label: {
+                Image(systemName: "speaker.slash.fill")
+                    .font(.system(size: 21, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(palette.primaryText)
+                    .background(palette.card)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(palette.divider, lineWidth: 1))
+            }
+            .accessibilityLabel("Stop voice")
+
+            Button {
+                Task {
+                    if isRecording {
+                        await stopAndSend()
+                    } else {
+                        await startRecording()
+                    }
+                }
+            } label: {
+                Image(systemName: isRecording ? "stop.fill" : "mic.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .frame(width: 64, height: 64)
+                    .foregroundStyle(Color(hex: "2C211B"))
+                    .background(isRecording ? palette.blush : palette.accent)
+                    .clipShape(Circle())
+            }
+            .disabled(isThinking)
+            .accessibilityLabel(isRecording ? "Stop and send" : "Start talking")
+
+            Button {
+                showingCrisisSupport = true
+            } label: {
+                Image(systemName: "cross.case.fill")
+                    .font(.system(size: 21, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(palette.destructive)
+                    .background(palette.card)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(palette.divider, lineWidth: 1))
+            }
+            .accessibilityLabel("Get help now")
+
+            Button {
+                endCall()
+            } label: {
+                Image(systemName: "phone.down.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(Color.white)
+                    .background(palette.destructive)
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Hang up")
+        }
+        .sheet(isPresented: $showingCrisisSupport) {
+            NavigationStack {
+                WarmScreen {
+                    VStack(alignment: .leading, spacing: 22) {
+                        CompanionCharacter(state: .hardMoment, size: 130)
+                            .frame(maxWidth: .infinity)
+                        SectionTitle(title: "Immediate danger", subtitle: "Stay in the app with \(profile.companionDisplayName) unless someone may be hurt right now. These options are only for danger that needs live emergency support.")
+                        CrisisSupportPanel(profile: profile)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 28)
+                }
+                .navigationTitle("Safety")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { showingCrisisSupport = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private var safetyReply: String {
+        "\(profile.displayName), I am taking this seriously. Stay with me here. Put distance between you and anything you could use to hurt yourself. We are going to talk through the next minute together. If someone may be hurt right now, use the immediate danger button too."
+    }
+
+    private var companionState: CompanionState {
+        if isThinking { return .thinking }
+        if isRecording { return .listening }
+        return .speaking
+    }
+
+    private func loadCallState() {
+        guard !didStartCall else { return }
+        didStartCall = true
+        messages = LocalPersistence.decode([ChatBubbleModel].self, from: storedChatMessages) ?? []
+        memories = seededMemories(existing: LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? [], profile: profile)
+
+        let greeting = openingPrompt ?? profile.personalCallGreeting
+        messages.append(ChatBubbleModel(role: .companion, text: greeting, sourceMode: "call"))
+        callStatus = "\(profile.companionDisplayName) is speaking..."
+        SpeechPlaybackEngine.shared.speak(greeting)
+    }
+
+    private func startRecording() async {
+        do {
+            transcript = ""
+            callStatus = "Listening..."
+            showingCrisisSupport = false
+            SpeechPlaybackEngine.shared.stop()
+            let contextualStrings = [
+                profile.displayName,
+                profile.rememberedPerson,
+                profile.companionDisplayName
+            ].filter { !$0.isEmpty && $0 != "there" && $0 != "them" }
+            try await speechService.startRecording(contextualStrings: contextualStrings) { partial in
+                transcript = partial
+            }
+            isRecording = true
+        } catch {
+            isRecording = false
+            callStatus = error.localizedDescription
+        }
+    }
+
+    private func stopAndSend() async {
+        do {
+            transcript = try await speechService.stopRecording()
+            isRecording = false
+            await sendTranscript()
+        } catch {
+            isRecording = false
+            callStatus = error.localizedDescription
+        }
+    }
+
+    private func sendTranscript() async {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isThinking else { return }
+        await sendCallMessage(trimmed)
+    }
+
+    private func sendCallMessage(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isThinking else { return }
+
+        let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: "call")
+        messages.append(userMessage)
+        rememberFacts(from: userMessage)
+        transcript = ""
+
+        if needsImmediateSafetySupport(trimmed) {
+            showingCrisisSupport = true
+            callStatus = "\(profile.companionDisplayName) is speaking..."
+            let reply = ChatBubbleModel(role: .companion, text: safetyReply, sourceMode: "call")
+            messages.append(reply)
+            SpeechPlaybackEngine.shared.speak(safetyReply)
+            return
+        }
+
+        callStatus = "\(profile.companionDisplayName) is thinking..."
+        isThinking = true
+
+        let response = await engine.reply(
+            to: trimmed,
+            context: CompanionContext(profile: profile, recentMessages: messages, memories: memories),
+            journeyPhase: JourneyState.load(from: storedJourneyState).currentPhase.rawValue
+        )
+        isThinking = false
+        callStatus = "\(profile.companionDisplayName) is speaking..."
+        let reply = ChatBubbleModel(role: .companion, text: response.reply, sourceMode: "call")
+        messages.append(reply)
+        SpeechPlaybackEngine.shared.speak(response.reply)
+    }
+
+    private func rememberFacts(from message: ChatBubbleModel) {
+        let extracted = MemoryExtractor.extract(from: message, profile: profile)
+        for memory in extracted {
+            if let index = memories.firstIndex(where: { $0.category == memory.category && $0.subject == memory.subject }) {
+                memories[index].content = memory.content
+                memories[index].sourceMessageIDs = Array(Set(memories[index].sourceMessageIDs + memory.sourceMessageIDs))
+                memories[index].updatedAt = Date()
+            } else {
+                memories.append(memory)
+            }
+        }
+    }
+
+    private func needsImmediateSafetySupport(_ text: String) -> Bool {
+        let lowercased = text.lowercased()
+        return [
+            "kill myself",
+            "end my life",
+            "hurt myself",
+            "hurt them",
+            "suicide",
+            "suicidal",
+            "can't stay safe",
+            "cannot stay safe",
+            "not safe",
+            "i want to die"
+        ].contains { lowercased.contains($0) }
+    }
+
+    private func endCall() {
+        speechService.cancelRecording()
+        SpeechPlaybackEngine.shared.stop()
+        dismiss()
+    }
+}
+
+struct CrisisSupportPanel: View {
+    @Environment(\.palette) private var palette
+    let profile: AppProfile
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Immediate danger")
+                .font(.system(size: 21, weight: .semibold, design: .serif))
+                .foregroundStyle(palette.primaryText)
+            Text("Keep talking here with your companion. Use these only if someone may be hurt right now or you need live emergency support.")
+                .font(.system(size: 16, weight: .regular, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+                .lineSpacing(4)
+            HStack(spacing: 10) {
+                Button {
+                    open("tel:911")
+                } label: {
+                    Label("911", systemImage: "phone.fill")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.white)
+                .background(palette.destructive)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Button {
+                    open("tel:988")
+                } label: {
+                    Label("988", systemImage: "phone.arrow.up.right.fill")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(hex: "2C211B"))
+                .background(palette.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Button {
+                    open("sms:988")
+                } label: {
+                    Label("Text", systemImage: "message.fill")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(palette.primaryText)
+                .background(palette.card)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(palette.divider, lineWidth: 1)
+                )
+            }
+
+            if !profile.trustedSupportName.isEmpty || profile.trustedSupportPhoneURL != nil {
+                Divider().background(palette.divider)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Reach \(profile.trustedSupportDisplayName)")
+                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text("\(profile.trustedSupportDisplayName) can be one more human voice in this moment.")
+                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(4)
+                    if let phoneURL = profile.trustedSupportPhoneURL {
+                        HStack(spacing: 10) {
+                            Button {
+                                UIApplication.shared.open(phoneURL)
+                            } label: {
+                                Label("Call", systemImage: "phone.fill")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .frame(maxWidth: .infinity, minHeight: 46)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color(hex: "2C211B"))
+                            .background(palette.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                            Button {
+                                if let messageURL = profile.trustedSupportMessageURL {
+                                    UIApplication.shared.open(messageURL)
+                                }
+                            } label: {
+                                Label("Text", systemImage: "message.fill")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .frame(maxWidth: .infinity, minHeight: 46)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(palette.primaryText)
+                            .background(palette.card)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(palette.divider, lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(palette.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(palette.destructive.opacity(0.55), lineWidth: 1)
+        )
+    }
+
+    private func open(_ value: String) {
+        guard let url = URL(string: value) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
 // MARK: - Hard Moment
 
 struct HardMomentView: View {
@@ -1876,6 +3141,7 @@ struct HardMomentView: View {
     @State private var timerRemaining = 0
     @State private var timerRunning = false
     @State private var slipConfirmed = false
+    @State private var showingBuddyCall = false
 
     var body: some View {
         WarmScreen {
@@ -1884,6 +3150,9 @@ struct HardMomentView: View {
                     CompanionCharacter(state: .hardMoment, size: 178)
                         .frame(maxWidth: .infinity)
                     SectionTitle(title: "I'm here. What happened?")
+                    personalGrounding
+                    BreathingPacer()
+                    stayWithMeCard
 
                     if let path {
                         flow(for: path)
@@ -1907,6 +3176,57 @@ struct HardMomentView: View {
         }
         .task(id: timerRunning) {
             await runDelayTimer()
+        }
+        .fullScreenCover(isPresented: $showingBuddyCall) {
+            BuddyCallView(
+                profile: profile,
+                contextTitle: "Hard moment",
+                openingPrompt: "\(profile.companionDisplayName) here, \(profile.displayName). I am right here with you. \(profile.personalAcheLine) You do not have to explain this perfectly. Start with one sentence, or just say stay with me."
+            )
+        }
+    }
+
+    private var personalGrounding: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("I remember this")
+                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                    .foregroundStyle(palette.primaryText)
+                Text(profile.personalAcheLine)
+                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineSpacing(4)
+                Text(profile.boundaryLine)
+                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineSpacing(4)
+                Text(profile.hardBehaviorLine)
+                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineSpacing(4)
+            }
+        }
+    }
+
+    private var stayWithMeCard: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("You can just talk")
+                    .font(.system(size: 22, weight: .semibold, design: .serif))
+                    .foregroundStyle(palette.primaryText)
+                Text("If choosing a category is too much, call \(profile.companionDisplayName) and let the messy part come out loud.")
+                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineSpacing(4)
+                HStack(spacing: 10) {
+                    PrimaryButton(title: "Talk to me", systemImage: "mic.fill") {
+                        showingBuddyCall = true
+                    }
+                    SecondaryButton(title: "Stay with me", systemImage: "heart.fill") {
+                        showingBuddyCall = true
+                    }
+                }
+            }
         }
     }
 
@@ -2025,21 +3345,17 @@ struct HardMomentView: View {
             }
         case .notSafe:
             VStack(alignment: .leading, spacing: 18) {
-                SectionTitle(title: "Human help comes first.", subtitle: "If you or someone else may be in immediate danger, contact emergency services now or reach a trusted person who can stay with you.")
+                SectionTitle(title: "Stay with me here.", subtitle: "We can talk through the next minute inside this app. If someone may be hurt right now, the immediate-danger options are below.")
+                CrisisSupportPanel(profile: profile)
                 WarmCard {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Right now")
                             .font(.system(size: 22, weight: .semibold, design: .serif))
                             .foregroundStyle(palette.primaryText)
-                        Text("Move away from anything you could use to hurt yourself or someone else. Call emergency services if danger is immediate. If you can, send one direct message to a trusted person: I am not safe alone right now. Can you stay with me or call me?")
+                        Text("Move away from anything you could use to hurt yourself or someone else. Stay with \(profile.companionDisplayName) here and say one sentence at a time. If someone may be hurt right now, use the immediate-danger options.")
                             .font(.system(size: 17, weight: .regular, design: .rounded))
                             .foregroundStyle(palette.secondaryText)
                             .lineSpacing(5)
-                    }
-                }
-                PrimaryButton(title: "Call emergency services", systemImage: "phone.fill") {
-                    if let url = URL(string: "tel://911") {
-                        UIApplication.shared.open(url)
                     }
                 }
             }
@@ -2154,11 +3470,13 @@ struct SettingsView: View {
     @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
     @AppStorage("storedChatMessages") private var storedChatMessages = ""
     @AppStorage("storedContactEvents") private var storedContactEvents = ""
+    @AppStorage("storedFeelingCheckIns") private var storedFeelingCheckIns = ""
     @AppStorage("storedProfile") private var storedProfile = ""
-    @AppStorage("storedOnboardingCompleted") private var storedOnboardingCompleted = false
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    @AppStorage("storedJourneyCheckIns") private var storedJourneyCheckIns = ""
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
+    @Binding var onboardingCompleted: Bool
     @State private var memories: [MemoryRecord] = []
     @State private var memorySearch = ""
 
@@ -2167,7 +3485,7 @@ struct SettingsView: View {
             WarmScreen {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 26) {
-                        SectionTitle(title: "Settings", subtitle: "Responses are AI-generated. Your history and memories are designed to stay under your control.")
+                        SectionTitle(title: "Settings", subtitle: "Responses are generated on this device. Your history and memories are designed to stay under your control.")
 
                         WarmCard {
                             VStack(alignment: .leading, spacing: 16) {
@@ -2190,6 +3508,29 @@ struct SettingsView: View {
                                     .foregroundStyle(palette.primaryText)
                                 TextField("Name your other self", text: $profile.companionName)
                                     .font(.system(size: 17, weight: .regular, design: .rounded))
+                                    .padding(14)
+                                    .background(palette.background)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                        }
+
+                        WarmCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Someone safe")
+                                    .font(.system(size: 22, weight: .semibold, design: .serif))
+                                    .foregroundStyle(palette.primaryText)
+                                Text("Optional. Leave this blank if there is no one personal to call right now.")
+                                    .font(.system(size: 15, weight: .regular, design: .rounded))
+                                    .foregroundStyle(palette.secondaryText)
+                                    .lineSpacing(4)
+                                TextField("Name", text: $profile.trustedSupportName)
+                                    .font(.system(size: 17, weight: .regular, design: .rounded))
+                                    .padding(14)
+                                    .background(palette.background)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                TextField("Phone", text: $profile.trustedSupportPhone)
+                                    .font(.system(size: 17, weight: .regular, design: .rounded))
+                                    .keyboardType(.phonePad)
                                     .padding(14)
                                     .background(palette.background)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -2305,24 +3646,11 @@ struct SettingsView: View {
 
     private func loadMemories() {
         if let decoded = LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems), !decoded.isEmpty {
-            memories = decoded
+            memories = seededMemories(existing: decoded, profile: profile)
             return
         }
 
-        var seeded: [MemoryRecord] = []
-        if !profile.personName.isEmpty {
-            seeded.append(MemoryRecord(category: "person information", subject: profile.personName, content: "User is recovering from attachment to \(profile.personName).", isPinned: true))
-        }
-        if !profile.contactGoals.isEmpty {
-            seeded.append(MemoryRecord(category: "boundary", subject: "Contact goal", content: profile.contactGoals.sorted().joined(separator: ", "), isPinned: true))
-        }
-        if !profile.currentHurt.isEmpty {
-            seeded.append(MemoryRecord(category: "current hurt", subject: "What hurts most", content: profile.currentHurt, isPinned: false))
-        }
-        if !profile.hardBehavior.isEmpty {
-            seeded.append(MemoryRecord(category: "feared behavior", subject: "Hard moment behavior", content: profile.hardBehavior, isPinned: false))
-        }
-        memories = seeded
+        memories = seededMemories(existing: [], profile: profile)
     }
 
     private func updateMemory(_ memory: MemoryRecord) {
@@ -2340,7 +3668,9 @@ struct SettingsView: View {
             memories: memories,
             messages: LocalPersistence.decode([ChatBubbleModel].self, from: storedChatMessages) ?? [],
             contactEvents: LocalPersistence.decode([ContactEvent].self, from: storedContactEvents) ?? [],
-            journey: JourneyState.load(from: storedJourneyState)
+            journey: JourneyState.load(from: storedJourneyState),
+            journeyCheckIns: LocalPersistence.decode([Int: String].self, from: storedJourneyCheckIns) ?? [:],
+            feelingCheckIns: LocalPersistence.decode([FeelingCheckIn].self, from: storedFeelingCheckIns) ?? []
         )
         UIPasteboard.general.string = LocalPersistence.encode(export)
     }
@@ -2352,8 +3682,10 @@ struct SettingsView: View {
         storedMemoryItems = ""
         storedChatMessages = ""
         storedContactEvents = ""
+        storedFeelingCheckIns = ""
         storedJourneyState = ""
-        storedOnboardingCompleted = false
+        storedJourneyCheckIns = ""
+        onboardingCompleted = false
         dismiss()
     }
 }
@@ -2365,6 +3697,68 @@ struct LocalExportBundle: Codable {
     let messages: [ChatBubbleModel]
     let contactEvents: [ContactEvent]
     let journey: JourneyState
+    let journeyCheckIns: [Int: String]
+    let feelingCheckIns: [FeelingCheckIn]
+}
+
+struct FeelingCheckIn: Identifiable, Codable, Equatable {
+    var id = UUID()
+    let optionRawValue: String
+    var createdAt = Date()
+
+    init(option: FeelingCheckInOption) {
+        self.optionRawValue = option.rawValue
+    }
+}
+
+enum FeelingCheckInOption: String, CaseIterable, Identifiable, Codable {
+    case heavy
+    case anxious
+    case numb
+    case missingThem
+    case angry
+    case okayish
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .heavy: "Heavy"
+        case .anxious: "Anxious"
+        case .numb: "Numb"
+        case .missingThem: "Missing them"
+        case .angry: "Angry"
+        case .okayish: "Okay-ish"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .heavy: "cloud.fill"
+        case .anxious: "waveform.path.ecg"
+        case .numb: "moon.zzz.fill"
+        case .missingThem: "heart.text.square.fill"
+        case .angry: "flame.fill"
+        case .okayish: "leaf.fill"
+        }
+    }
+
+    func openingLine(for profile: AppProfile) -> String {
+        switch self {
+        case .heavy:
+            return "Let it be heavy without carrying it perfectly. Tell me where you feel it most."
+        case .anxious:
+            return "We can slow the spinning down together. Tell me the thought that keeps looping."
+        case .numb:
+            return "Numb still counts. You do not have to force tears. Tell me what feels far away."
+        case .missingThem:
+            return "I remember this is about \(profile.rememberedPerson). Say what you miss, and we will hold it without turning it into a plan."
+        case .angry:
+            return "Anger can be your body protecting you. Tell me what felt unfair or crossed."
+        case .okayish:
+            return "Okay-ish is allowed. Tell me what feels a little softer, even if it is small."
+        }
+    }
 }
 
 struct MemoryRecord: Identifiable, Codable, Equatable {
@@ -2378,6 +3772,87 @@ struct MemoryRecord: Identifiable, Codable, Equatable {
     var isPinned: Bool
     var createdAt = Date()
     var updatedAt = Date()
+}
+
+func seededMemories(existing: [MemoryRecord], profile: AppProfile) -> [MemoryRecord] {
+    var memories = existing
+
+    func appendIfMissing(_ memory: MemoryRecord) {
+        guard !memories.contains(where: { $0.category == memory.category && $0.subject == memory.subject }) else { return }
+        memories.append(memory)
+    }
+
+    if !profile.personName.isEmpty {
+        appendIfMissing(
+            MemoryRecord(
+                category: "person",
+                subject: profile.personName,
+                content: "\(profile.displayName) is healing from \(profile.relationshipSummary).",
+                importance: 0.95,
+                confidence: 1.0,
+                sourceMessageIDs: [],
+                isPinned: true
+            )
+        )
+    }
+
+    if !profile.contactGoals.isEmpty {
+        appendIfMissing(
+            MemoryRecord(
+                category: "protection",
+                subject: "Contact goal",
+                content: profile.boundaryLine,
+                importance: 0.9,
+                confidence: 1.0,
+                sourceMessageIDs: [],
+                isPinned: true
+            )
+        )
+    }
+
+    if !profile.currentHurt.isEmpty {
+        appendIfMissing(
+            MemoryRecord(
+                category: "hurt",
+                subject: "Hardest part",
+                content: profile.personalAcheLine,
+                importance: 0.88,
+                confidence: 1.0,
+                sourceMessageIDs: [],
+                isPinned: true
+            )
+        )
+    }
+
+    if !profile.hardBehavior.isEmpty {
+        appendIfMissing(
+            MemoryRecord(
+                category: "hard moment",
+                subject: "Likely urge",
+                content: profile.hardBehaviorLine,
+                importance: 0.84,
+                confidence: 1.0,
+                sourceMessageIDs: [],
+                isPinned: false
+            )
+        )
+    }
+
+    if !profile.trustedSupportName.isEmpty {
+        appendIfMissing(
+            MemoryRecord(
+                category: "support",
+                subject: profile.trustedSupportName,
+                content: profile.supportLine,
+                importance: 0.9,
+                confidence: 1.0,
+                sourceMessageIDs: [],
+                isPinned: true
+            )
+        )
+    }
+
+    return memories
 }
 
 enum MemoryExtractor {
@@ -2444,7 +3919,7 @@ enum MemoryExtractor {
             )
         }
 
-        if message.sourceMode == "voice" {
+        if message.sourceMode == "voice" || message.sourceMode == "call" || message.sourceMode == "quick_prompt" {
             records.append(
                 MemoryRecord(
                     category: "conversation source",

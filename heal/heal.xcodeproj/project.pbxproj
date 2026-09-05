@@ -7,20 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BAF3E797304B31F6009A9B23 /* HealYourHeartModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF3E796304B31F5009A9B23 /* HealYourHeartModels.swift */; };
 		BAF3E799304B364C009A9B23 /* HealYourHeartServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF3E798304B364C009A9B23 /* HealYourHeartServices.swift */; };
 		BAF3E79B304B3752009A9B23 /* HealYourHeartCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF3E79A304B3752009A9B23 /* HealYourHeartCopy.swift */; };
-		BAF3E79F304B3D1D009A9B23 /* HealYourHeartSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF3E79E304B3D1D009A9B23 /* HealYourHeartSecurity.swift */; };
 		BAF3E7A1304B51A9009A9B23 /* AppleNativeServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF3E7A0304B51A9009A9B23 /* AppleNativeServices.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		BAF3E788304A9038009A9B23 /* healyourheart.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = healyourheart.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		BAF3E796304B31F5009A9B23 /* HealYourHeartModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealYourHeartModels.swift; sourceTree = "<group>"; };
 		BAF3E798304B364C009A9B23 /* HealYourHeartServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealYourHeartServices.swift; sourceTree = "<group>"; };
 		BAF3E79A304B3752009A9B23 /* HealYourHeartCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealYourHeartCopy.swift; sourceTree = "<group>"; };
 		BAF3E79C304B37F1009A9B23 /* AcceptanceChecklist.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AcceptanceChecklist.md; sourceTree = "<group>"; };
-		BAF3E79E304B3D1D009A9B23 /* HealYourHeartSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealYourHeartSecurity.swift; sourceTree = "<group>"; };
 		BAF3E7A0304B51A9009A9B23 /* AppleNativeServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleNativeServices.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -48,11 +44,9 @@
 			children = (
 				BAF3E78A304A9038009A9B23 /* heal */,
 				BAF3E789304A9038009A9B23 /* Products */,
-				BAF3E796304B31F5009A9B23 /* HealYourHeartModels.swift */,
 				BAF3E798304B364C009A9B23 /* HealYourHeartServices.swift */,
 				BAF3E79A304B3752009A9B23 /* HealYourHeartCopy.swift */,
 				BAF3E79C304B37F1009A9B23 /* AcceptanceChecklist.md */,
-				BAF3E79E304B3D1D009A9B23 /* HealYourHeartSecurity.swift */,
 				BAF3E7A0304B51A9009A9B23 /* AppleNativeServices.swift */,
 			);
 			sourceTree = "<group>";
@@ -139,11 +133,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BAF3E797304B31F6009A9B23 /* HealYourHeartModels.swift in Sources */,
 				BAF3E79B304B3752009A9B23 /* HealYourHeartCopy.swift in Sources */,
 				BAF3E799304B364C009A9B23 /* HealYourHeartServices.swift in Sources */,
 				BAF3E7A1304B51A9009A9B23 /* AppleNativeServices.swift in Sources */,
-				BAF3E79F304B3D1D009A9B23 /* HealYourHeartSecurity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
