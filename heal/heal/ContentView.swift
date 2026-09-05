@@ -2,12 +2,13 @@
 //  ContentView.swift
 //  heal
 //
-//  Created by Taylor Drew on 9/4/26.
+//  Created on 9/4/26.
 //
 
 import SwiftUI
 import UIKit
 import AVFoundation
+import CryptoKit
 
 struct ContentView: View {
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system.rawValue
@@ -18,6 +19,7 @@ struct ContentView: View {
     @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
     @State private var profile = AppProfile()
     @State private var onboardingCompleted = false
+    @State private var isBooting = true
 
     private var mode: AppearanceMode {
         AppearanceMode(rawValue: appearanceMode) ?? .system
@@ -25,31 +27,49 @@ struct ContentView: View {
 
     var body: some View {
         ThemedRoot(appearanceMode: mode) {
-            if onboardingCompleted {
-                MainAppView(
-                    profile: $profile,
-                    appearanceMode: $appearanceMode,
-                    onboardingCompleted: $onboardingCompleted
-                )
-            } else {
-                OnboardingView(profile: $profile) {
-                    storedJourneyState = JourneyState().encoded
-                    storedMemoryItems = LocalPersistence.encode(
-                        seededMemories(
-                            existing: LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? [],
-                            profile: profile
-                        )
+            ZStack {
+                if onboardingCompleted {
+                    MainAppView(
+                        profile: $profile,
+                        appearanceMode: $appearanceMode,
+                        onboardingCompleted: $onboardingCompleted
                     )
-                    onboardingCompleted = true
+                } else {
+                    OnboardingView(profile: $profile) {
+                        storedJourneyState = JourneyState().encoded
+                        storedMemoryItems = LocalPersistence.encode(
+                            seededMemories(
+                                existing: LocalPersistence.decode([MemoryRecord].self, from: storedMemoryItems) ?? [],
+                                profile: profile
+                            )
+                        )
+                        onboardingCompleted = true
+                    }
+                }
+
+                if isBooting {
+                    LaunchSplashView()
+                        .transition(.opacity)
                 }
             }
         }
-        .onAppear(perform: loadStoredState)
+        .task {
+            await bootApp()
+        }
         .onChange(of: profile) { _, newValue in
             storedProfile = LocalPersistence.encode(newValue)
         }
         .onChange(of: onboardingCompleted) { _, newValue in
             storedOnboardingCompleted = newValue
+        }
+    }
+
+    private func bootApp() async {
+        loadStoredState()
+        _ = CompanionVoiceSamplePlayer.hasBundledSample
+        try? await Task.sleep(for: .milliseconds(1200))
+        withAnimation(.easeInOut(duration: 0.35)) {
+            isBooting = false
         }
     }
 
@@ -454,6 +474,33 @@ struct SecondaryButton: View {
     }
 }
 
+struct SheetBackButton: View {
+    @Environment(\.palette) private var palette
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: title == "Close" ? "xmark" : "chevron.left")
+                    .font(.system(size: 14, weight: .bold))
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .foregroundStyle(palette.primaryText)
+            .background(palette.card)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(palette.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct ChoiceButton: View {
     @Environment(\.palette) private var palette
     let title: String
@@ -539,7 +586,7 @@ struct CompanionCharacter: View {
         ZStack {
             Ellipse()
                 .fill(palette.isNight ? palette.accent.opacity(0.22) : Color.black.opacity(0.08))
-                .frame(width: size * 0.72, height: size * 0.14)
+                .frame(width: size * 0.86, height: size * 0.13)
                 .offset(y: size * 0.42)
 
             if palette.isNight {
@@ -549,19 +596,8 @@ struct CompanionCharacter: View {
                     .blur(radius: 24)
             }
 
-            BlobShape()
-                .fill(palette.isNight ? Color(hex: "C76E55") : Color(hex: "F0B082"))
-                .frame(width: size * 0.76, height: size)
+            MaraOpenHandAvatar(state: state, size: size)
                 .shadow(color: palette.accent.opacity(palette.isNight ? 0.28 : 0.14), radius: 18, x: 0, y: 9)
-                .overlay(alignment: .topTrailing) {
-                    Circle()
-                        .fill(Color.white.opacity(palette.isNight ? 0.16 : 0.32))
-                        .frame(width: size * 0.18)
-                        .offset(x: -size * 0.18, y: size * 0.16)
-                }
-
-            face
-                .offset(y: -size * 0.05)
 
             if state == .thinking {
                 ThinkingDots(size: size)
@@ -574,17 +610,123 @@ struct CompanionCharacter: View {
         .opacity(reduceMotion && state != .resting ? 0.94 : 1)
         .animation(reduceMotion ? nil : .easeInOut(duration: state == .celebrating ? 0.75 : 1.8).repeatForever(autoreverses: true), value: animate)
         .onAppear { animate = true }
+        .accessibilityHidden(true)
+    }
+}
+
+struct MaraOpenHandAvatar: View {
+    @Environment(\.palette) private var palette
+    let state: CompanionState
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            palmGlow
+            fingers
+            palm
+            thumb
+            face
+        }
+        .frame(width: size * 1.22, height: size * 1.04)
+    }
+
+    private var palmGlow: some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [
+                        Color(hex: "FFE0B4").opacity(palette.isNight ? 0.28 : 0.36),
+                        palette.accent.opacity(0.12),
+                        .clear
+                    ],
+                    center: .center,
+                    startRadius: 4,
+                    endRadius: size * 0.58
+                )
+            )
+            .frame(width: size * 1.02, height: size * 1.02)
+            .offset(y: size * 0.02)
+    }
+
+    private var fingers: some View {
+        HStack(spacing: size * 0.045) {
+            finger(width: 0.17, height: 0.42, rotation: -14, y: -0.15)
+            finger(width: 0.18, height: 0.52, rotation: -5, y: -0.2)
+            finger(width: 0.18, height: 0.49, rotation: 5, y: -0.19)
+            finger(width: 0.16, height: 0.38, rotation: 15, y: -0.13)
+        }
+        .offset(y: -size * 0.18)
+    }
+
+    private func finger(width: CGFloat, height: CGFloat, rotation: Double, y: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
+            .fill(fleshGradient)
+            .frame(width: size * width, height: size * height)
+            .rotationEffect(.degrees(rotation))
+            .offset(y: size * y)
+    }
+
+    private var palm: some View {
+        RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+            .fill(fleshGradient)
+            .frame(width: size * 0.88, height: size * 0.54)
+            .clipShape(MaraPalmShape())
+            .overlay(
+                Circle()
+                    .fill(Color(hex: "FFE0B4").opacity(palette.isNight ? 0.14 : 0.2))
+                    .frame(width: size * 0.42, height: size * 0.42)
+                    .blur(radius: 8)
+                    .offset(y: -size * 0.07)
+            )
+            .offset(y: size * 0.16)
+    }
+
+    private var thumb: some View {
+        RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
+            .fill(Color(hex: "C27050"))
+            .frame(width: size * 0.28, height: size * 0.15)
+            .rotationEffect(.degrees(-28))
+            .offset(x: -size * 0.46, y: size * 0.06)
     }
 
     private var face: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 22) {
+        VStack(spacing: size * 0.055) {
+            HStack(spacing: size * 0.16) {
                 Eye(isConcerned: state == .concerned || state == .hardMoment)
+                    .frame(width: size * 0.07, height: size * 0.1)
                 Eye(isConcerned: state == .concerned || state == .hardMoment)
+                    .frame(width: size * 0.07, height: size * 0.1)
             }
             Mouth(isSpeaking: state == .speaking, isConcerned: state == .concerned || state == .hardMoment)
+                .frame(width: size * 0.12, height: size * 0.05)
         }
-        .foregroundStyle(Color(hex: "3A241A"))
+        .foregroundStyle(Color(hex: "2C211B").opacity(palette.isNight ? 0.72 : 0.82))
+        .offset(y: size * 0.13)
+    }
+
+    private var fleshGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                palette.isNight ? Color(hex: "D98C68") : Color(hex: "E6A078"),
+                palette.isNight ? Color(hex: "BE6F51") : Color(hex: "C97557"),
+                palette.isNight ? Color(hex: "99513E") : Color(hex: "A85742")
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
+struct MaraPalmShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.minY + rect.height * 0.24))
+        path.addCurve(to: CGPoint(x: rect.minX + rect.width * 0.92, y: rect.minY + rect.height * 0.2), control1: CGPoint(x: rect.minX + rect.width * 0.28, y: rect.minY), control2: CGPoint(x: rect.minX + rect.width * 0.72, y: rect.minY * 0.2))
+        path.addCurve(to: CGPoint(x: rect.minX + rect.width * 0.88, y: rect.minY + rect.height * 0.82), control1: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.42), control2: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.68))
+        path.addCurve(to: CGPoint(x: rect.minX + rect.width * 0.14, y: rect.minY + rect.height * 0.78), control1: CGPoint(x: rect.minX + rect.width * 0.67, y: rect.maxY), control2: CGPoint(x: rect.minX + rect.width * 0.34, y: rect.maxY))
+        path.addCurve(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.minY + rect.height * 0.24), control1: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.62), control2: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.38))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -650,10 +792,10 @@ struct BreathingPacer: View {
                     .foregroundStyle(palette.accent)
             }
             VStack(spacing: 4) {
-                Text(isExpanded ? "Let it out slowly" : "Breathe in gently")
+                Text(isExpanded ? "Let it out" : "In gently")
                     .font(.system(size: 18, weight: .semibold, design: .serif))
                     .foregroundStyle(palette.primaryText)
-                Text("No fixing. Just one breath with me.")
+                Text("No fixing. Just breathe with me.")
                     .font(.system(size: 14, weight: .regular, design: .rounded))
                     .foregroundStyle(palette.secondaryText)
             }
@@ -667,6 +809,59 @@ struct BreathingPacer: View {
                 .stroke(palette.divider.opacity(0.8), lineWidth: 1)
         )
         .onAppear { isExpanded = true }
+    }
+}
+
+struct LaunchSplashView: View {
+    @Environment(\.palette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
+    var body: some View {
+        ZStack {
+            palette.background
+                .ignoresSafeArea()
+
+            VStack(spacing: 30) {
+                Spacer()
+
+                ZStack {
+                    ForEach(0..<4) { index in
+                        Circle()
+                            .stroke(palette.accent.opacity(0.26 - Double(index) * 0.045), lineWidth: 7)
+                            .frame(width: 92 + CGFloat(index * 34), height: 92 + CGFloat(index * 34))
+                            .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.08 : 0.94))
+                            .animation(
+                                reduceMotion ? nil : .easeInOut(duration: 1.55 + Double(index) * 0.18).repeatForever(autoreverses: true),
+                                value: isExpanded
+                            )
+                    }
+
+                    CompanionCharacter(state: .resting, size: 112)
+                }
+                .frame(width: 220, height: 220)
+
+                VStack(spacing: 8) {
+                    Text("Heal Your Heart")
+                        .font(.system(size: 38, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text("Mara is getting close.")
+                        .font(.system(size: 18, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                    Text(isExpanded ? "Let it out" : "In gently")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .frame(height: 24)
+                        .padding(.top, 8)
+                }
+                .multilineTextAlignment(.center)
+
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+        }
+        .onAppear { isExpanded = true }
+        .accessibilityLabel("Heal Your Heart is loading")
     }
 }
 
@@ -690,9 +885,17 @@ struct BlobShape: Shape {
 
 struct OnboardingView: View {
     @Environment(\.palette) private var palette
+    @AppStorage("autoListenAfterMaraSpeaks") private var autoListenAfterMaraSpeaks = false
+    @AppStorage("voiceGuidedSetupEnabled") private var voiceGuidedSetupEnabled = false
     @Binding var profile: AppProfile
     let complete: () -> Void
     @State private var step = 0
+    @State private var setupSpeechService = AppleSpeechRecognitionService()
+    @State private var setupTranscript = ""
+    @State private var isSetupRecording = false
+    @State private var setupSilenceTask: Task<Void, Never>?
+    @State private var lastSpokenSetupStep = -1
+    @State private var setupPromptTask: Task<Void, Never>?
 
     private let relationshipTypes = ["My partner", "My ex", "Someone I was dating", "A situationship", "Someone I loved", "We were never officially together", "Something else"]
     private let durations = ["A few weeks", "A few months", "About a year", "Several years", "It's complicated"]
@@ -712,6 +915,9 @@ struct OnboardingView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         currentStep
+                        if showsSetupVoiceAnswer {
+                            setupVoiceAnswerPanel
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 32)
@@ -723,6 +929,19 @@ struct OnboardingView: View {
                     .padding(.bottom, 18)
             }
         }
+        .onAppear {
+            speakSetupPromptIfNeeded()
+        }
+        .onChange(of: step) { _, _ in
+            setupPromptTask?.cancel()
+            setupPromptTask = nil
+            setupSilenceTask?.cancel()
+            setupSilenceTask = nil
+            setupTranscript = ""
+            isSetupRecording = false
+            setupSpeechService.cancelRecording()
+            speakSetupPromptIfNeeded()
+        }
     }
 
     private var progressBar: some View {
@@ -732,7 +951,7 @@ struct OnboardingView: View {
                     .fill(palette.divider.opacity(0.75))
                 Capsule()
                     .fill(palette.accent)
-                    .frame(width: proxy.size.width * CGFloat(step + 1) / 16)
+                    .frame(width: proxy.size.width * CGFloat(step + 1) / 17)
             }
         }
         .frame(height: 6)
@@ -781,8 +1000,10 @@ struct OnboardingView: View {
                 text: $profile.trustedSupportPhone,
                 subtitle: "Only add this if it helps. You can skip it and add it later."
             )
-        default:
+        case 15:
             namingStep
+        default:
+            voiceStep
         }
     }
 
@@ -810,6 +1031,35 @@ struct OnboardingView: View {
                 CompanionCharacter(state: .resting, size: 170)
                     .offset(y: 20)
                 Spacer()
+            }
+            WarmCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Let Mara walk me through it", systemImage: "waveform.circle.fill")
+                        .font(.system(size: 20, weight: .semibold, design: .serif))
+                        .foregroundStyle(palette.primaryText)
+                    Text("She can ask each question out loud. You answer by talking, pause, and the app moves on.")
+                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(4)
+                    Button {
+                        voiceGuidedSetupEnabled = true
+                        autoListenAfterMaraSpeaks = true
+                        withAnimation(.easeInOut) {
+                            step = 1
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "mic.fill")
+                            Text("Talk through setup")
+                        }
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .foregroundStyle(Color(hex: "2C211B"))
+                        .background(palette.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
@@ -917,6 +1167,19 @@ struct OnboardingView: View {
         }
     }
 
+    private var voiceStep: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            CompanionCharacter(state: .listening, size: 150)
+                .frame(maxWidth: .infinity)
+            SectionTitle(
+                title: "Choose the voice that stays with you.",
+                subtitle: "This app uses one companion voice. You can hear it before you open Home."
+            )
+            VoiceSettingsCard()
+            AutoListenConsentCard(isEnabled: $autoListenAfterMaraSpeaks)
+        }
+    }
+
     private var initialMemoryPreview: [String] {
         var items = [
             "Your name is \(profile.displayName).",
@@ -947,33 +1210,268 @@ struct OnboardingView: View {
                 Button {
                     withAnimation(.easeInOut) { step -= 1 }
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 52, height: 52)
-                        .foregroundStyle(palette.primaryText)
-                        .background(palette.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(palette.divider, lineWidth: 1)
-                        )
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .bold))
+                        Text("Back")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    }
+                    .frame(width: 104, height: 52)
+                    .foregroundStyle(palette.primaryText)
+                    .background(palette.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(palette.divider, lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
             }
 
-            PrimaryButton(title: step == 0 ? "Start healing" : step == 15 ? "Open Home" : "Continue", systemImage: step == 0 ? "heart.fill" : "arrow.right") {
+            PrimaryButton(title: step == 0 ? "Start healing" : step == 16 ? "Open Home" : "Continue", systemImage: step == 0 ? "heart.fill" : "arrow.right") {
                 withAnimation(.easeInOut) {
-                    if step >= 15 {
+                    if step >= 16 {
                         if profile.companionName.isEmpty {
                             profile.companionName = "Mara"
                         }
                         complete()
                     } else {
+                        if step == 0 {
+                            voiceGuidedSetupEnabled = false
+                        }
                         step += 1
                     }
                 }
             }
+            .disabled(!canContinue)
+            .opacity(canContinue ? 1 : 0.45)
         }
+    }
+
+    private var canContinue: Bool {
+        step != 16 || CompanionVoiceSamplePlayer.hasBundledSample
+    }
+
+    private var showsSetupVoiceAnswer: Bool {
+        (1...15).contains(step)
+    }
+
+    private var setupVoiceAnswerPanel: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: isSetupRecording ? "waveform.circle.fill" : "mic.circle.fill")
+                        .font(.system(size: 25, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(isSetupRecording ? "Mara is listening" : "Answer out loud")
+                            .font(.system(size: 20, weight: .semibold, design: .serif))
+                            .foregroundStyle(palette.primaryText)
+                        Text(isSetupRecording ? "Pause when you are done. I will catch it." : "You can say the answer instead of typing.")
+                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                if !setupTranscript.isEmpty {
+                    Text(setupTranscript)
+                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.primaryText)
+                        .lineSpacing(4)
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task {
+                            if isSetupRecording {
+                                await stopAndApplySetupAnswer(advance: true)
+                            } else {
+                                await startSetupRecording()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: isSetupRecording ? "stop.fill" : "mic.fill")
+                            Text(isSetupRecording ? "Done" : "Talk to answer")
+                        }
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .foregroundStyle(Color(hex: "2C211B"))
+                        .background(isSetupRecording ? palette.blush : palette.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        speakSetupPromptIfNeeded(force: true)
+                    } label: {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .frame(width: 52, height: 50)
+                            .foregroundStyle(palette.primaryText)
+                            .background(palette.background)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .accessibilityLabel("Hear question again")
+                }
+            }
+        }
+    }
+
+    private func speakSetupPromptIfNeeded(force: Bool = false) {
+        guard voiceGuidedSetupEnabled, showsSetupVoiceAnswer, force || lastSpokenSetupStep != step else { return }
+        lastSpokenSetupStep = step
+        let prompt = setupPromptForCurrentStep
+        setupPromptTask = Task {
+            await SpeechPlaybackEngine.shared.prepareLiveVoice()
+            _ = await SpeechPlaybackEngine.shared.speakLive(prompt)
+        }
+    }
+
+    private var setupPromptForCurrentStep: String {
+        switch step {
+        case 1: "What should I call you?"
+        case 2: "Who are we getting over?"
+        case 3: "What were they to you?"
+        case 4: "How long were they part of your life?"
+        case 5: "When did things end?"
+        case 6: "Who ended it?"
+        case 7: "Are you still talking?"
+        case 8: "What are you trying to do right now? Say anything that fits."
+        case 9: "When did you last have contact?"
+        case 10: "Tell me what happened."
+        case 11: "What hurts the most right now?"
+        case 12: "When it gets bad, what are you most likely to do?"
+        case 13: "Is there anyone safe you might want nearby? You can say skip."
+        case 14: "Add their phone if you want. You can say skip."
+        case 15: "What should we call the voice who stays with you?"
+        default: ""
+        }
+    }
+
+    private func startSetupRecording() async {
+        do {
+            setupTranscript = ""
+            SpeechPlaybackEngine.shared.stop()
+            let contextualStrings = [
+                profile.displayName,
+                profile.rememberedPerson,
+                profile.companionDisplayName
+            ].filter { !$0.isEmpty && $0 != "there" && $0 != "them" }
+            try await setupSpeechService.startRecording(contextualStrings: contextualStrings) { partial in
+                setupTranscript = partial
+                scheduleSetupSilenceAutoApply()
+            }
+            isSetupRecording = true
+        } catch {
+            isSetupRecording = false
+            setupTranscript = error.localizedDescription
+        }
+    }
+
+    private func stopAndApplySetupAnswer(advance: Bool) async {
+        setupSilenceTask?.cancel()
+        setupSilenceTask = nil
+        do {
+            setupTranscript = try await setupSpeechService.stopRecording()
+            isSetupRecording = false
+            applySetupAnswer(setupTranscript)
+            if advance, canContinue, step < 16 {
+                withAnimation(.easeInOut) {
+                    step += 1
+                }
+            }
+        } catch {
+            isSetupRecording = false
+            setupTranscript = error.localizedDescription
+        }
+    }
+
+    private func scheduleSetupSilenceAutoApply() {
+        setupSilenceTask?.cancel()
+        let trimmed = setupTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        setupSilenceTask = Task {
+            try? await Task.sleep(for: .milliseconds(1300))
+            guard !Task.isCancelled else { return }
+            await stopAndApplySetupAnswer(advance: true)
+        }
+    }
+
+    private func applySetupAnswer(_ rawAnswer: String) {
+        let answer = rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { return }
+        if ["skip", "none", "no one", "nobody"].contains(answer.lowercased()), step == 13 || step == 14 {
+            if step == 13 { profile.trustedSupportName = "" }
+            if step == 14 { profile.trustedSupportPhone = "" }
+            return
+        }
+
+        switch step {
+        case 1:
+            profile.userName = answer
+        case 2:
+            profile.personName = answer
+        case 3:
+            profile.relationshipType = bestMatchingOption(from: relationshipTypes, answer: answer) ?? answer
+        case 4:
+            profile.duration = bestMatchingOption(from: durations, answer: answer) ?? answer
+        case 5:
+            let options = ["It hasn't completely ended", "I'm not sure", "Skip"]
+            profile.endingStatus = bestMatchingOption(from: options, answer: answer) ?? answer
+        case 6:
+            profile.endedBy = bestMatchingOption(from: endedByOptions, answer: answer) ?? answer
+        case 7:
+            profile.contactStatus = bestMatchingOption(from: communicationOptions, answer: answer) ?? answer
+        case 8:
+            let matches = contactGoals.filter { answerMatches($0, answer: answer) }
+            if matches.isEmpty {
+                profile.contactGoals.insert(answer)
+            } else {
+                for match in matches {
+                    profile.contactGoals.insert(match)
+                }
+            }
+        case 9:
+            profile.lastContact = bestMatchingOption(from: lastContactOptions, answer: answer) ?? answer
+        case 10:
+            profile.story = appendSpoken(answer, to: profile.story)
+        case 11:
+            profile.currentHurt = appendSpoken(answer, to: profile.currentHurt)
+        case 12:
+            profile.hardBehavior = bestMatchingOption(from: hardBehaviorOptions, answer: answer) ?? answer
+        case 13:
+            profile.trustedSupportName = answer
+        case 14:
+            profile.trustedSupportPhone = answer
+        case 15:
+            profile.companionName = answer
+        default:
+            break
+        }
+    }
+
+    private func bestMatchingOption(from options: [String], answer: String) -> String? {
+        options.first { answerMatches($0, answer: answer) }
+    }
+
+    private func answerMatches(_ option: String, answer: String) -> Bool {
+        let answerWords = Set(normalizedWords(answer))
+        let optionWords = normalizedWords(option).filter { !["a", "an", "the", "to", "it", "is", "was", "were", "we", "my", "i"].contains($0) }
+        return optionWords.contains { answerWords.contains($0) }
+    }
+
+    private func normalizedWords(_ text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private func appendSpoken(_ answer: String, to existing: String) -> String {
+        let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? answer : "\(trimmed)\n\n\(answer)"
     }
 }
 
@@ -1516,6 +2014,33 @@ struct JourneyDay: Identifiable, Equatable {
     }
 }
 
+enum JourneyDetailSection: String, CaseIterable, Identifiable {
+    case lesson
+    case action
+    case talk
+    case steady
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lesson: "Read"
+        case .action: "Do"
+        case .talk: "Talk"
+        case .steady: "Steady"
+        }
+    }
+
+    var heading: String {
+        switch self {
+        case .lesson: "One thought"
+        case .action: "One small thing"
+        case .talk: "Two ways in"
+        case .steady: "If it spikes"
+        }
+    }
+}
+
 extension JourneyState {
     func displayState(for number: Int) -> JourneyDay.State {
         if isCompleted(number) { return .completed }
@@ -1602,12 +2127,17 @@ struct JourneyDayDetail: View {
     let markCompleted: () -> Void
     @State private var showingTalkToMe = false
     @State private var checkInText = ""
+    @State private var selectedDetailSection: JourneyDetailSection = .lesson
 
     var body: some View {
         NavigationStack {
             WarmScreen {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
+                        SheetBackButton(title: "Back") {
+                            dismiss()
+                        }
+
                         HStack(alignment: .center, spacing: 16) {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("DAY \(day.number)")
@@ -1626,41 +2156,14 @@ struct JourneyDayDetail: View {
                             showingTalkToMe = true
                         }
 
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Short lesson")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                Text(day.lesson)
-                                    .font(.system(size: 18, weight: .regular, design: .rounded))
-                                    .foregroundStyle(palette.secondaryText)
-                                    .lineSpacing(5)
+                        Picker("Day section", selection: $selectedDetailSection) {
+                            ForEach(JourneyDetailSection.allCases) { section in
+                                Text(section.title).tag(section)
                             }
                         }
+                        .pickerStyle(.segmented)
 
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("One practical action")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                Text(day.action)
-                                    .font(.system(size: 18, weight: .regular, design: .rounded))
-                                    .foregroundStyle(palette.secondaryText)
-                                    .lineSpacing(5)
-                            }
-                        }
-
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Simple check-in")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                Text(day.checkIn)
-                                    .font(.system(size: 18, weight: .regular, design: .rounded))
-                                    .foregroundStyle(palette.secondaryText)
-                                    .lineSpacing(5)
-                            }
-                        }
+                        focusedDetailCard
 
                         WarmCard {
                             VStack(alignment: .leading, spacing: 12) {
@@ -1684,38 +2187,6 @@ struct JourneyDayDetail: View {
                                     .foregroundStyle(palette.secondaryText)
                             }
                         }
-
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("Talk it through")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                DetailBulletList(items: talkPrompts)
-                            }
-                        }
-
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("If it gets hard today")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                DetailBulletList(items: hardMomentPlan)
-                            }
-                        }
-
-                        WarmCard {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("Tiny plan")
-                                    .font(.system(size: 21, weight: .semibold, design: .serif))
-                                    .foregroundStyle(palette.primaryText)
-                                DetailBulletList(items: tinyPlan)
-                            }
-                        }
-
-                        Text("\(profile.companionDisplayName) can talk this through with you when you need it.")
-                            .font(.system(size: 16, weight: .regular, design: .rounded))
-                            .foregroundStyle(palette.secondaryText)
-                            .lineSpacing(5)
 
                         PrimaryButton(title: day.state == .completed ? "Completed" : "Mark complete", systemImage: "checkmark.circle.fill") {
                             saveCheckIn()
@@ -1764,6 +2235,32 @@ struct JourneyDayDetail: View {
         storedJourneyCheckIns = LocalPersistence.encode(checkIns)
     }
 
+    private var focusedDetailCard: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(selectedDetailSection.heading)
+                    .font(.system(size: 21, weight: .semibold, design: .serif))
+                    .foregroundStyle(palette.primaryText)
+                switch selectedDetailSection {
+                case .lesson:
+                    Text(day.lesson)
+                        .font(.system(size: 18, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(5)
+                case .action:
+                    Text(day.action)
+                        .font(.system(size: 18, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(5)
+                case .talk:
+                    DetailBulletList(items: Array(talkPrompts.prefix(2)))
+                case .steady:
+                    DetailBulletList(items: Array(hardMomentPlan.prefix(2)))
+                }
+            }
+        }
+    }
+
     private var talkPrompts: [String] {
         [
             "What part of this lesson feels tender or hard to believe right now?",
@@ -1807,13 +2304,6 @@ struct JourneyDayDetail: View {
         }
     }
 
-    private var tinyPlan: [String] {
-        [
-            "One thing to do: \(day.action)",
-            "One thing to say out loud: \"I can feel this without obeying it.\"",
-            "One thing to bring back here later: \(day.checkIn)"
-        ]
-    }
 }
 
 struct DetailBulletList: View {
@@ -1850,6 +2340,7 @@ struct CompanionChatView: View {
     @State private var mode: TalkMode = .chat
     @State private var draft = ""
     @State private var isThinking = false
+    @State private var voiceTask: Task<Void, Never>?
     private let engine = CompanionEngine()
     @State private var messages: [ChatBubbleModel] = [
         ChatBubbleModel(role: .companion, text: "Hi. I am here. You do not have to explain everything again.")
@@ -1933,6 +2424,11 @@ struct CompanionChatView: View {
         }
         .onAppear(perform: loadMessages)
         .onAppear(perform: loadMemories)
+        .onDisappear {
+            voiceTask?.cancel()
+            voiceTask = nil
+            SpeechPlaybackEngine.shared.stop()
+        }
         .onChange(of: messages) { _, newValue in
             storedChatMessages = LocalPersistence.encode(newValue)
         }
@@ -2001,15 +2497,15 @@ struct CompanionChatView: View {
     private func sendMessage() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isThinking else { return }
-        send(trimmed, sourceMode: mode == .talk ? "voice" : "text", shouldSpeakReply: mode == .talk)
+        send(trimmed, sourceMode: mode == .talk ? "voice" : "text")
         draft = ""
     }
 
     private func sendQuickMessage(_ text: String) {
-        send(text, sourceMode: "quick_prompt", shouldSpeakReply: mode == .talk)
+        send(text, sourceMode: "quick_prompt")
     }
 
-    private func send(_ text: String, sourceMode: String, shouldSpeakReply: Bool) {
+    private func send(_ text: String, sourceMode: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isThinking else { return }
         let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: sourceMode)
@@ -2029,13 +2525,21 @@ struct CompanionChatView: View {
                 ChatBubbleModel(
                     role: .companion,
                     text: response.reply,
-                    sourceMode: shouldSpeakReply ? "voice" : "text",
+                    sourceMode: "voice",
                     suggestedReplies: suggestedReplies(for: response)
                 )
             )
-            if shouldSpeakReply {
-                SpeechPlaybackEngine.shared.speak(response.reply)
-            }
+            speakCompanionText(response.reply)
+        }
+    }
+
+    private func speakCompanionText(_ text: String) {
+        voiceTask?.cancel()
+        SpeechPlaybackEngine.shared.stop()
+        voiceTask = Task {
+            await SpeechPlaybackEngine.shared.prepareLiveVoice()
+            guard !Task.isCancelled else { return }
+            _ = await SpeechPlaybackEngine.shared.speakLive(text)
         }
     }
 
@@ -2181,36 +2685,104 @@ protocol CompanionService {
     func send(message: String, context: CompanionContext) -> CompanionReply
 }
 
-protocol SpeechPlaybackService {
-    func speak(_ text: String)
-    func stop()
-}
-
-final class SpeechPlaybackEngine: NSObject, SpeechPlaybackService, AVSpeechSynthesizerDelegate {
-    static let shared = SpeechPlaybackEngine()
-    private let synthesizer = AVSpeechSynthesizer()
-
-    private override init() {
-        super.init()
-        synthesizer.delegate = self
+@MainActor
+final class CompanionVoiceSamplePlayer {
+    static let shared = CompanionVoiceSamplePlayer()
+    static let clonedVoiceName = "Mara's voice"
+    static var hasBundledSample: Bool {
+        Bundle.main.url(forResource: "sample_cloned_voice", withExtension: "m4a") != nil ||
+        bundledLineURL(forAssetName: sampleLineAssetName) != nil
     }
 
-    func speak(_ text: String) {
-        stop()
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-        try? audioSession.setActive(true)
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
-        utterance.pitchMultiplier = 0.95
-        synthesizer.speak(utterance)
+    private static let sampleLineAssetName = "companion-cloned-voice-sample"
+
+    func play() {
+        if Bundle.main.url(forResource: "sample_cloned_voice", withExtension: "m4a") != nil {
+            MaraVoice.shared.play(clip: "sample_cloned_voice")
+        } else {
+            _ = playBundledLine(assetName: Self.sampleLineAssetName)
+        }
+    }
+
+    @discardableResult
+    func playLine(for text: String) -> Bool {
+        let assetName = Self.lineAssetName(for: text)
+        return playBundledLine(assetName: assetName)
+    }
+
+    func speakLive(_ text: String) async throws {
+        MaraVoice.shared.stop()
+        try await MaraVoice.shared.speak(text)
+    }
+
+    func prepareLiveVoice() async {
+        await MaraVoice.shared.prepare()
     }
 
     func stop() {
-        if synthesizer.isSpeaking {
-            synthesizer.stopSpeaking(at: .immediate)
+        MaraVoice.shared.stop()
+    }
+
+    private func playBundledLine(assetName: String) -> Bool {
+        guard let url = Self.bundledLineURL(forAssetName: assetName) else {
+            return false
+        }
+
+        let clipName = url.deletingPathExtension().lastPathComponent
+        MaraVoice.shared.play(clip: clipName, ext: url.pathExtension)
+        return true
+    }
+
+    static func lineAssetName(for text: String) -> String {
+        let cleaned = normalized(text)
+        let digest = SHA256.hash(data: Data(cleaned.utf8))
+        let hash = digest.map { String(format: "%02x", $0) }.joined()
+        return "mara-line-\(hash)"
+    }
+
+    private static func bundledLineURL(forAssetName assetName: String) -> URL? {
+        Bundle.main.url(forResource: assetName, withExtension: "wav") ??
+        Bundle.main.url(forResource: assetName, withExtension: "m4a")
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(separator: " ")
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+final class SpeechPlaybackEngine: NSObject {
+    static let shared = SpeechPlaybackEngine()
+
+    private override init() {
+        super.init()
+    }
+
+    func speakLive(_ text: String) async -> Bool {
+        stop()
+        if CompanionVoiceSamplePlayer.shared.playLine(for: text) {
+            return true
+        }
+
+        do {
+            try await CompanionVoiceSamplePlayer.shared.speakLive(text)
+            return true
+        } catch {
+            return false
         }
     }
+
+    func prepareLiveVoice() async {
+        await CompanionVoiceSamplePlayer.shared.prepareLiveVoice()
+    }
+
+    func stop() {
+        CompanionVoiceSamplePlayer.shared.stop()
+    }
+
 }
 
 struct LocalCompanionService: CompanionService {
@@ -2259,14 +2831,14 @@ struct LocalCompanionService: CompanionService {
         if containsAny(lowercased, words: ["text", "call", "reach out", "message"]) {
             let boundary = profile.contactGoals.isEmpty ? "the boundary you want" : profile.contactGoals.sorted().joined(separator: ", ")
             return CompanionReply(
-                reply: "\(profile.displayName), pause before you act. You said your current goal is \(boundary). \(profile.hardBehaviorLine) What outcome are you hoping contact with \(personName) will give you tonight?",
+                reply: "\(profile.displayName), pause with me. Your goal is \(boundary). What are you hoping contact with \(personName) will give you tonight?",
                 suggestedAction: "delay_timer"
             )
         }
 
         if containsAny(lowercased, words: ["liked", "story", "profile", "social", "seen"]) {
             return CompanionReply(
-                reply: "That is a real trigger, especially because this is \(profile.relationshipSummary). What it literally proves may be small, and what it touches in you may be much bigger. What do you know for sure, and what are you afraid it means?",
+                reply: "That is a real trigger. What it proves may be small. What it touches in you may be much bigger. What do you know for sure?",
                 suggestedAction: "facts_hopes_fears"
             )
         }
@@ -2274,12 +2846,12 @@ struct LocalCompanionService: CompanionService {
         if containsAny(lowercased, words: ["miss", "lonely", "want them", "need them"]) {
             if !profile.currentHurt.isEmpty {
                 return CompanionReply(
-                    reply: "This connects to what you said hurts most: \(profile.currentHurt). I will not talk you out of missing \(personName). I do want to ask: are you missing the whole reality, or the version you keep replaying?",
+                    reply: "This touches the part you said hurts most: \(profile.currentHurt). I will not talk you out of missing \(personName). Are you missing the whole reality, or the version you keep replaying?",
                     suggestedAction: nil
                 )
             }
             return CompanionReply(
-                reply: "Missing \(personName) after \(profile.relationshipSummary) makes sense. It still does not mean contacting them is the next right move. Which part are you missing right now: comfort, certainty, touch, apology, or the old routine?",
+                reply: "Missing \(personName) makes sense. It still does not mean contact is the next move. Which part are you missing: comfort, certainty, touch, apology, or the old routine?",
                 suggestedAction: nil
             )
         }
@@ -2333,6 +2905,17 @@ struct ChatBubble: View {
     let rememberMessage: () -> Void
     let forgetMessage: () -> Void
     let deleteMessage: () -> Void
+    @State private var isExpanded = false
+
+    private var shouldCollapse: Bool {
+        message.role == .companion && message.text.count > 180
+    }
+
+    private var displayedText: String {
+        guard shouldCollapse && !isExpanded else { return message.text }
+        let index = message.text.index(message.text.startIndex, offsetBy: min(160, message.text.count))
+        return String(message.text[..<index]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -2348,10 +2931,20 @@ struct ChatBubble: View {
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(palette.secondaryText)
                 }
-                Text(message.text)
+                Text(displayedText)
                     .font(.system(size: 17, weight: .regular, design: .rounded))
                     .foregroundStyle(message.role == .user ? Color(hex: "2C211B") : palette.primaryText)
                     .lineSpacing(4)
+                if shouldCollapse {
+                    Button(isExpanded ? "Less" : "More") {
+                        withAnimation(.easeInOut) {
+                            isExpanded.toggle()
+                        }
+                    }
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.accent)
+                    .buttonStyle(.plain)
+                }
                 if message.role == .companion && !message.suggestedReplies.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
                         ForEach(message.suggestedReplies, id: \.self) { reply in
@@ -2445,6 +3038,7 @@ struct TalkControls: View {
     @State private var isRecording = false
     @State private var speechStatus = "Tap the microphone to speak."
     @State private var speechService = AppleSpeechRecognitionService()
+    @State private var silenceTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -2502,6 +3096,11 @@ struct TalkControls: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(palette.background)
+        .onDisappear {
+            silenceTask?.cancel()
+            silenceTask = nil
+            speechService.cancelRecording()
+        }
     }
 
     private func startRecording() async {
@@ -2515,6 +3114,7 @@ struct TalkControls: View {
             ].filter { !$0.isEmpty && $0 != "there" && $0 != "them" }
             try await speechService.startRecording(contextualStrings: contextualStrings) { transcript in
                 draft = transcript
+                scheduleSilenceAutoSend()
             }
             isRecording = true
         } catch {
@@ -2524,14 +3124,29 @@ struct TalkControls: View {
     }
 
     private func stopRecording() async {
+        silenceTask?.cancel()
+        silenceTask = nil
         do {
             let transcript = try await speechService.stopRecording()
             draft = transcript
-            speechStatus = "Transcript ready. You can edit it before sending."
+            speechStatus = "Sending..."
+            send()
         } catch {
             speechStatus = error.localizedDescription
         }
         isRecording = false
+    }
+
+    private func scheduleSilenceAutoSend() {
+        silenceTask?.cancel()
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        silenceTask = Task {
+            try? await Task.sleep(for: .milliseconds(1300))
+            guard !Task.isCancelled else { return }
+            await stopRecording()
+        }
     }
 }
 
@@ -2541,6 +3156,7 @@ struct BuddyCallView: View {
     @AppStorage("storedChatMessages") private var storedChatMessages = ""
     @AppStorage("storedMemoryItems") private var storedMemoryItems = ""
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
+    @AppStorage("autoListenAfterMaraSpeaks") private var autoListenAfterMaraSpeaks = false
     let profile: AppProfile
     var contextTitle: String? = nil
     var openingPrompt: String? = nil
@@ -2551,8 +3167,12 @@ struct BuddyCallView: View {
     @State private var callStatus = "Connected"
     @State private var isRecording = false
     @State private var isThinking = false
+    @State private var isVoiceLoading = false
     @State private var didStartCall = false
     @State private var showingCrisisSupport = false
+    @State private var showingRecentCallHistory = false
+    @State private var silenceTask: Task<Void, Never>?
+    @State private var deepReplyTask: Task<Void, Never>?
     private let engine = CompanionEngine()
 
     private var visibleMessages: [ChatBubbleModel] {
@@ -2570,50 +3190,66 @@ struct BuddyCallView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 18)
 
-                Spacer(minLength: 20)
+                ScrollView {
+                    VStack(spacing: 14) {
+                        CompanionCharacter(state: companionState, size: 210)
+                            .padding(.top, 18)
+                            .padding(.bottom, 2)
 
-                CompanionCharacter(state: companionState, size: 210)
-                    .padding(.bottom, 8)
+                        Text(profile.companionDisplayName)
+                            .font(.system(size: 44, weight: .semibold, design: .serif))
+                            .foregroundStyle(palette.primaryText)
 
-                Text(profile.companionDisplayName)
-                    .font(.system(size: 44, weight: .semibold, design: .serif))
-                    .foregroundStyle(palette.primaryText)
+                        if let contextTitle {
+                            Text(contextTitle)
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .foregroundStyle(palette.secondaryText)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
 
-                if let contextTitle {
-                    Text(contextTitle)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 4)
+                        Text(callStatus)
+                            .font(.system(size: 17, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                            .multilineTextAlignment(.center)
+
+                        if isVoiceLoading {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Voice is warming up")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundStyle(palette.secondaryText)
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(palette.card.opacity(0.72))
+                            .clipShape(Capsule())
+                        }
+
+                        buddyReplyPanel
+                            .padding(.horizontal, 24)
+                            .padding(.top, 6)
+
+                        BreathingPacer()
+                            .padding(.horizontal, 24)
+
+                        currentTranscript
+                            .padding(.horizontal, 24)
+
+                        quickSupportPrompts
+                            .padding(.horizontal, 24)
+
+                        recentHistoryToggle
+                            .padding(.horizontal, 24)
+
+                        if showingRecentCallHistory {
+                            recentCallHistory
+                                .padding(.horizontal, 24)
+                        }
+                    }
+                    .padding(.bottom, 18)
                 }
-
-                Text(callStatus)
-                    .font(.system(size: 17, weight: .regular, design: .rounded))
-                    .foregroundStyle(palette.secondaryText)
-                    .padding(.top, 4)
-
-                buddyReplyPanel
-                    .padding(.horizontal, 24)
-                    .padding(.top, 20)
-
-                BreathingPacer()
-                    .padding(.horizontal, 24)
-                    .padding(.top, 14)
-
-                currentTranscript
-                    .padding(.horizontal, 24)
-                    .padding(.top, 14)
-
-                quickSupportPrompts
-                    .padding(.horizontal, 24)
-                    .padding(.top, 14)
-
-                recentCallHistory
-                    .padding(.horizontal, 24)
-                    .padding(.top, 18)
-
-                Spacer(minLength: 18)
 
                 callControls
                     .padding(.horizontal, 24)
@@ -2631,24 +3267,53 @@ struct BuddyCallView: View {
 
     private var callHeader: some View {
         HStack {
+            Button {
+                endCall()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Back")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+                .foregroundStyle(palette.primaryText)
+                .background(palette.card)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(palette.divider, lineWidth: 1))
+            }
+            .accessibilityLabel("Back")
+
+            Spacer(minLength: 10)
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("In-app call")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(palette.secondaryText)
-                Text("Voice stays on this device.")
+                Text("I am here.")
                     .font(.system(size: 13, weight: .regular, design: .rounded))
                     .foregroundStyle(palette.secondaryText)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            Spacer(minLength: 10)
+
             Button {
                 endCall()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 42, height: 42)
-                    .foregroundStyle(palette.primaryText)
-                    .background(palette.card)
-                    .clipShape(Circle())
+                HStack(spacing: 8) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("End")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+                .foregroundStyle(palette.primaryText)
+                .background(palette.card)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(palette.divider, lineWidth: 1))
             }
             .accessibilityLabel("End call")
         }
@@ -2663,6 +3328,7 @@ struct BuddyCallView: View {
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(transcript.isEmpty ? palette.secondaryText : palette.primaryText)
                 .lineSpacing(5)
+                .lineLimit(transcript.isEmpty ? 3 : 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(18)
@@ -2682,7 +3348,7 @@ struct BuddyCallView: View {
                     Image(systemName: "speaker.wave.2.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(palette.accent)
-                    Text("\(profile.companionDisplayName) said back")
+                    Text(profile.companionDisplayName)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(palette.secondaryText)
                     Spacer()
@@ -2700,6 +3366,31 @@ struct BuddyCallView: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(palette.accent.opacity(0.65), lineWidth: 1)
             )
+        }
+    }
+
+    @ViewBuilder
+    private var recentHistoryToggle: some View {
+        if !visibleMessages.isEmpty {
+            Button {
+                withAnimation(.easeInOut) {
+                    showingRecentCallHistory.toggle()
+                }
+            } label: {
+                HStack {
+                    Text(showingRecentCallHistory ? "Hide" : "Recent")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    Spacer()
+                    Image(systemName: showingRecentCallHistory ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                .foregroundStyle(palette.secondaryText)
+                .padding(.horizontal, 14)
+                .frame(height: 40)
+                .background(palette.card.opacity(0.7))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -2740,7 +3431,7 @@ struct BuddyCallView: View {
 
     private var quickSupportPrompts: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("If words are hard")
+            Text("No words yet?")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(palette.secondaryText)
             HStack(spacing: 8) {
@@ -2776,15 +3467,16 @@ struct BuddyCallView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isThinking || isRecording)
+        .disabled(isRecording)
     }
 
     private var callControls: some View {
         HStack(spacing: 14) {
             Button {
                 if let lastBuddyReply {
-                    callStatus = "\(profile.companionDisplayName) is speaking..."
-                    SpeechPlaybackEngine.shared.speak(lastBuddyReply)
+                    Task {
+                        await speakOrShowTextStatus(lastBuddyReply, thenListen: true)
+                    }
                 }
             } label: {
                 Image(systemName: "speaker.wave.2.fill")
@@ -2828,7 +3520,6 @@ struct BuddyCallView: View {
                     .background(isRecording ? palette.blush : palette.accent)
                     .clipShape(Circle())
             }
-            .disabled(isThinking)
             .accessibilityLabel(isRecording ? "Stop and send" : "Start talking")
 
             Button {
@@ -2860,9 +3551,13 @@ struct BuddyCallView: View {
             NavigationStack {
                 WarmScreen {
                     VStack(alignment: .leading, spacing: 22) {
+                        SheetBackButton(title: "Close") {
+                            showingCrisisSupport = false
+                        }
+
                         CompanionCharacter(state: .hardMoment, size: 130)
                             .frame(maxWidth: .infinity)
-                        SectionTitle(title: "Immediate danger", subtitle: "Stay in the app with \(profile.companionDisplayName) unless someone may be hurt right now. These options are only for danger that needs live emergency support.")
+                        SectionTitle(title: "If this is dangerous", subtitle: "Stay with \(profile.companionDisplayName). Use these only if someone may be hurt right now.")
                         CrisisSupportPanel(profile: profile)
                         Spacer(minLength: 0)
                     }
@@ -2885,8 +3580,8 @@ struct BuddyCallView: View {
     }
 
     private var companionState: CompanionState {
-        if isThinking { return .thinking }
         if isRecording { return .listening }
+        if isThinking { return .thinking }
         return .speaking
     }
 
@@ -2898,8 +3593,10 @@ struct BuddyCallView: View {
 
         let greeting = openingPrompt ?? profile.personalCallGreeting
         messages.append(ChatBubbleModel(role: .companion, text: greeting, sourceMode: "call"))
-        callStatus = "\(profile.companionDisplayName) is speaking..."
-        SpeechPlaybackEngine.shared.speak(greeting)
+        Task {
+            await SpeechPlaybackEngine.shared.prepareLiveVoice()
+            await speakOrShowTextStatus(greeting, thenListen: true)
+        }
     }
 
     private func startRecording() async {
@@ -2915,6 +3612,7 @@ struct BuddyCallView: View {
             ].filter { !$0.isEmpty && $0 != "there" && $0 != "them" }
             try await speechService.startRecording(contextualStrings: contextualStrings) { partial in
                 transcript = partial
+                scheduleSilenceAutoSend()
             }
             isRecording = true
         } catch {
@@ -2924,6 +3622,8 @@ struct BuddyCallView: View {
     }
 
     private func stopAndSend() async {
+        silenceTask?.cancel()
+        silenceTask = nil
         do {
             transcript = try await speechService.stopRecording()
             isRecording = false
@@ -2934,15 +3634,27 @@ struct BuddyCallView: View {
         }
     }
 
+    private func scheduleSilenceAutoSend() {
+        silenceTask?.cancel()
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        silenceTask = Task {
+            try? await Task.sleep(for: .milliseconds(1300))
+            guard !Task.isCancelled else { return }
+            await stopAndSend()
+        }
+    }
+
     private func sendTranscript() async {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isThinking else { return }
+        guard !trimmed.isEmpty else { return }
         await sendCallMessage(trimmed)
     }
 
     private func sendCallMessage(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isThinking else { return }
+        guard !trimmed.isEmpty else { return }
 
         let userMessage = ChatBubbleModel(role: .user, text: trimmed, sourceMode: "call")
         messages.append(userMessage)
@@ -2951,26 +3663,79 @@ struct BuddyCallView: View {
 
         if needsImmediateSafetySupport(trimmed) {
             showingCrisisSupport = true
-            callStatus = "\(profile.companionDisplayName) is speaking..."
             let reply = ChatBubbleModel(role: .companion, text: safetyReply, sourceMode: "call")
             messages.append(reply)
-            SpeechPlaybackEngine.shared.speak(safetyReply)
+            await speakOrShowTextStatus(safetyReply, thenListen: false)
             return
         }
 
-        callStatus = "\(profile.companionDisplayName) is thinking..."
-        isThinking = true
+        let immediateReply = immediateCallReply(for: trimmed)
+        messages.append(ChatBubbleModel(role: .companion, text: immediateReply, sourceMode: "call"))
+        await speakOrShowTextStatus(immediateReply, thenListen: true)
 
-        let response = await engine.reply(
-            to: trimmed,
-            context: CompanionContext(profile: profile, recentMessages: messages, memories: memories),
-            journeyPhase: JourneyState.load(from: storedJourneyState).currentPhase.rawValue
-        )
-        isThinking = false
-        callStatus = "\(profile.companionDisplayName) is speaking..."
-        let reply = ChatBubbleModel(role: .companion, text: response.reply, sourceMode: "call")
-        messages.append(reply)
-        SpeechPlaybackEngine.shared.speak(response.reply)
+        deepReplyTask?.cancel()
+        deepReplyTask = Task {
+            isThinking = true
+            let response = await engine.reply(
+                to: trimmed,
+                context: CompanionContext(profile: profile, recentMessages: messages, memories: memories),
+                journeyPhase: JourneyState.load(from: storedJourneyState).currentPhase.rawValue
+            )
+            isThinking = false
+
+            guard !Task.isCancelled else { return }
+            guard response.reply != immediateReply else { return }
+            messages.append(ChatBubbleModel(role: .companion, text: response.reply, sourceMode: "call"))
+            await speakOrShowTextStatus(response.reply, thenListen: false)
+        }
+    }
+
+    private func immediateCallReply(for text: String) -> String {
+        let lowercased = text.lowercased()
+        if lowercased.contains("alone") || lowercased.contains("lonely") {
+            return "I am right here with you. You do not have to hold this by yourself."
+        }
+        if lowercased.contains("panic") || lowercased.contains("anxious") || lowercased.contains("scared") {
+            return "Stay with me. Slow is enough right now."
+        }
+        if lowercased.contains("miss") || lowercased.contains("reach out") || lowercased.contains("text them") {
+            return "I hear how strong that pull is. Pause with me for one breath."
+        }
+        return "I hear you. Keep talking to me."
+    }
+
+    private func speakOrShowTextStatus(_ text: String, thenListen: Bool) async {
+        callStatus = "\(profile.companionDisplayName) answered"
+        isVoiceLoading = true
+
+        Task {
+            let didSpeak = await SpeechPlaybackEngine.shared.speakLive(text)
+
+            if !didSpeak {
+                callStatus = "\(profile.companionDisplayName) is speaking"
+                try? await Task.sleep(for: .milliseconds(700))
+                _ = await SpeechPlaybackEngine.shared.speakLive(text)
+            }
+
+            isVoiceLoading = false
+
+            if thenListen {
+                let startedListening = await startListeningIfAllowed()
+                if !startedListening {
+                    callStatus = "Tap the mic when you are ready"
+                }
+            } else {
+                callStatus = "\(profile.companionDisplayName) is here"
+            }
+        }
+    }
+
+    private func startListeningIfAllowed(delay: Duration = .milliseconds(450)) async -> Bool {
+        guard autoListenAfterMaraSpeaks, !isRecording, !isThinking, !showingCrisisSupport else { return false }
+        try? await Task.sleep(for: delay)
+        guard autoListenAfterMaraSpeaks, !isRecording, !isThinking, !showingCrisisSupport else { return false }
+        await startRecording()
+        return isRecording
     }
 
     private func rememberFacts(from message: ChatBubbleModel) {
@@ -3003,6 +3768,10 @@ struct BuddyCallView: View {
     }
 
     private func endCall() {
+        silenceTask?.cancel()
+        silenceTask = nil
+        deepReplyTask?.cancel()
+        deepReplyTask = nil
         speechService.cancelRecording()
         SpeechPlaybackEngine.shared.stop()
         dismiss()
@@ -3015,7 +3784,7 @@ struct CrisisSupportPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Immediate danger")
+            Text("If this is dangerous")
                 .font(.system(size: 21, weight: .semibold, design: .serif))
                 .foregroundStyle(palette.primaryText)
             Text("Keep talking here with your companion. Use these only if someone may be hurt right now or you need live emergency support.")
@@ -3129,6 +3898,7 @@ struct CrisisSupportPanel: View {
 
 struct HardMomentView: View {
     @Environment(\.palette) private var palette
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("storedContactEvents") private var storedContactEvents = ""
     let profile: AppProfile
     @State private var path: HardMomentPath?
@@ -3147,6 +3917,10 @@ struct HardMomentView: View {
         WarmScreen {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    SheetBackButton(title: "Close") {
+                        dismiss()
+                    }
+
                     CompanionCharacter(state: .hardMoment, size: 178)
                         .frame(maxWidth: .infinity)
                     SectionTitle(title: "I'm here. What happened?")
@@ -3155,6 +3929,21 @@ struct HardMomentView: View {
                     stayWithMeCard
 
                     if let path {
+                        Button {
+                            withAnimation(.easeInOut) {
+                                self.path = nil
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("Choose something else")
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundStyle(palette.secondaryText)
+                        }
+                        .buttonStyle(.plain)
+
                         flow(for: path)
                     } else {
                         VStack(spacing: 10) {
@@ -3474,6 +4263,7 @@ struct SettingsView: View {
     @AppStorage("storedProfile") private var storedProfile = ""
     @AppStorage(JourneyState.storageKey) private var storedJourneyState = ""
     @AppStorage("storedJourneyCheckIns") private var storedJourneyCheckIns = ""
+    @AppStorage("autoListenAfterMaraSpeaks") private var autoListenAfterMaraSpeaks = false
     @Binding var profile: AppProfile
     @Binding var appearanceMode: String
     @Binding var onboardingCompleted: Bool
@@ -3485,6 +4275,10 @@ struct SettingsView: View {
             WarmScreen {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 26) {
+                        SheetBackButton(title: "Close") {
+                            dismiss()
+                        }
+
                         SectionTitle(title: "Settings", subtitle: "Responses are generated on this device. Your history and memories are designed to stay under your control.")
 
                         WarmCard {
@@ -3513,6 +4307,10 @@ struct SettingsView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                         }
+
+                        VoiceSettingsCard()
+
+                        AutoListenConsentCard(isEnabled: $autoListenAfterMaraSpeaks)
 
                         WarmCard {
                             VStack(alignment: .leading, spacing: 14) {
@@ -3687,6 +4485,180 @@ struct SettingsView: View {
         storedJourneyCheckIns = ""
         onboardingCompleted = false
         dismiss()
+    }
+}
+
+struct VoiceSettingsCard: View {
+    @Environment(\.palette) private var palette
+    @AppStorage("maraHuggingFaceToken") private var voiceToken = ""
+    @State private var isTestingVoice = false
+    @State private var voiceStatus = ""
+
+    var body: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Companion voice")
+                            .font(.system(size: 22, weight: .semibold, design: .serif))
+                            .foregroundStyle(palette.primaryText)
+                        Text(CompanionVoiceSamplePlayer.clonedVoiceName)
+                            .font(.system(size: 15, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                    }
+                    Spacer()
+                    Button {
+                        CompanionVoiceSamplePlayer.shared.play()
+                    } label: {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .foregroundStyle(palette.primaryText)
+                            .background(palette.background)
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel("Hear this voice")
+                    .buttonStyle(.plain)
+                    .disabled(!CompanionVoiceSamplePlayer.hasBundledSample)
+                    .opacity(CompanionVoiceSamplePlayer.hasBundledSample ? 1 : 0.45)
+                }
+
+                HStack(spacing: 12) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(CompanionVoiceSamplePlayer.clonedVoiceName)
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundStyle(palette.primaryText)
+                        Text("Bundled cloned voice")
+                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                    }
+                    Spacer()
+                }
+                .padding(14)
+                .background(palette.background)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(palette.accent, lineWidth: 1)
+                )
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Voice key")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.primaryText)
+                    SecureField("Paste Hugging Face token", text: $voiceToken)
+                        .font(.system(size: 16, weight: .regular, design: .rounded))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(13)
+                        .background(palette.background)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(palette.divider, lineWidth: 1)
+                        )
+                    Text("Needed for live Mara voice. The bundled preview still works without it.")
+                        .font(.system(size: 13, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(3)
+                }
+
+                Button {
+                    testLiveVoice()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isTestingVoice {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "speaker.wave.2.fill")
+                        }
+                        Text(isTestingVoice ? "Testing Mara" : "Test Mara speaking")
+                    }
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .foregroundStyle(Color(hex: "2C211B"))
+                    .background(palette.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(isTestingVoice)
+
+                if !voiceStatus.isEmpty {
+                    Text(voiceStatus)
+                        .font(.system(size: 13, weight: .regular, design: .rounded))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineSpacing(3)
+                }
+
+                Text(voiceHelpText)
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineSpacing(4)
+            }
+        }
+        .onAppear(perform: applyVoiceToken)
+        .onChange(of: voiceToken) { _, _ in
+            applyVoiceToken()
+        }
+    }
+
+    private var voiceHelpText: String {
+        if !CompanionVoiceSamplePlayer.hasBundledSample {
+            return "The cloned voice sample is missing from the app bundle."
+        }
+
+        return "This is the only voice choice in the app."
+    }
+
+    private func applyVoiceToken() {
+        MaraVoice.shared.useHuggingFace(token: voiceToken)
+    }
+
+    private func testLiveVoice() {
+        isTestingVoice = true
+        voiceStatus = "Asking Mara to speak..."
+        applyVoiceToken()
+        Task {
+            let didSpeak = await SpeechPlaybackEngine.shared.speakLive("I am here with you. You can talk to me.")
+            isTestingVoice = false
+            voiceStatus = didSpeak ? "Mara spoke." : "Mara could not reach the voice service. Check the token."
+        }
+    }
+}
+
+struct AutoListenConsentCard: View {
+    @Environment(\.palette) private var palette
+    @Binding var isEnabled: Bool
+
+    var body: some View {
+        WarmCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
+                    Image(systemName: isEnabled ? "mic.circle.fill" : "mic.slash.circle.fill")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(isEnabled ? palette.accent : palette.secondaryText)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Quick reply mic")
+                            .font(.system(size: 22, weight: .semibold, design: .serif))
+                            .foregroundStyle(palette.primaryText)
+                        Text("After Mara answers in a call, open the mic so you can answer without hunting for the button.")
+                            .font(.system(size: 15, weight: .regular, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                            .lineSpacing(4)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $isEnabled)
+                        .labelsHidden()
+                }
+                Text(isEnabled ? "You can still stop listening anytime." : "Mara will wait for you to tap the mic.")
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundStyle(palette.secondaryText)
+            }
+        }
     }
 }
 

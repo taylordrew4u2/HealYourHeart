@@ -546,7 +546,7 @@ The Home screen should feel personal, not like a statistics dashboard.
 
 Show:
 
-> Good evening, Taylor.
+> Good evening.
 
 Beside or below it, show the companion character.
 
@@ -961,7 +961,7 @@ Example memory:
 {
   "category": "trigger",
   "subject": "nights",
-  "content": "Taylor reports that urges to text Alex are strongest after midnight.",
+  "content": "The user reports that urges to text Alex are strongest after midnight.",
   "importance": 0.87,
   "sourceMessageIDs": ["..."],
   "createdAt": "..."

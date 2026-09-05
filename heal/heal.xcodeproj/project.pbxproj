@@ -108,6 +108,9 @@
 			);
 			mainGroup = BAF3E77F304A9038009A9B23;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BA95AF06304BE9E500E56582 /* XCRemoteSwiftPackageReference "open-swara" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BAF3E789304A9038009A9B23 /* Products */;
 			projectDirPath = "";
@@ -368,6 +371,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BA95AF06304BE9E500E56582 /* XCRemoteSwiftPackageReference "open-swara" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jaymunshi/open-swara";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 	};
 	rootObject = BAF3E780304A9038009A9B23 /* Project object */;
 }
